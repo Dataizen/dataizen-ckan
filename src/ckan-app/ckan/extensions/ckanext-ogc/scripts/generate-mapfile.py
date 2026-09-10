@@ -3333,7 +3333,41 @@ END
         except Exception as e:
             logger.warning(f"Erreur calcul BBOX pour {table_name}: {e}")
             return None
-    
+
+    def _datastore_layer_meta(self, table_name: str, geom_column: str):
+        """Pour une table datastore : (EXTENT « minx miny maxx maxy » via ST_EstimatedExtent,
+        INSTANTANÉ grâce à l'ANALYZE post-géométrisation, contrairement à ST_Extent qui balaye
+        toute la table ; None si indisponible) et présence de la table d'aperçu bas-zoom
+        `<table>_ov`. Un EXTENT figé évite que chaque GetCapabilities recalcule l'emprise."""
+        if not HAS_PSYCOPG2:
+            return None, False
+        extent, overview = None, False
+        try:
+            conn = psycopg2.connect(
+                host=self.postgis_host, port=self.postgis_port, dbname=self.postgis_db,
+                user=self.postgis_user, password=self.postgis_password)
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT ST_XMin(e), ST_YMin(e), ST_XMax(e), ST_YMax(e) "
+                    "FROM (SELECT ST_EstimatedExtent(%s, %s) AS e) s", (table_name, geom_column))
+                r = cur.fetchone()
+                if r and all(v is not None for v in r):
+                    extent = f"{r[0]} {r[1]} {r[2]} {r[3]}"
+            except Exception as e:
+                conn.rollback()
+                logger.debug(f"EstimatedExtent indisponible pour {table_name}: {e}")
+            try:
+                cur.execute("SELECT to_regclass(%s) IS NOT NULL", (f'"{table_name}_ov"',))
+                overview = bool(cur.fetchone()[0])
+            except Exception:
+                conn.rollback()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            logger.debug(f"meta datastore indisponible pour {table_name}: {e}")
+        return extent, overview
+
     def generate_mapfile(self, dataset: Dict[str, Any]) -> bool:
         """
         Génère un mapfile MapServer pour un dataset
@@ -4370,18 +4404,28 @@ END
                 else:
                     unique_column = self._detect_unique_column_datastore(table_name)
                 
-                # EXTENT du layer depuis PostGIS (WMS GetCapabilities + zoom client)
+                # EXTENT figé du layer + présence d'un aperçu bas-zoom `<table>_ov`.
+                # datagis : ST_Extent (tables souvent petites) ; datastore : ST_EstimatedExtent
+                # (instantané, indispensable sur les gros jeux, sinon chaque GetCapabilities balaye
+                # toute la table).
                 extent_line = ""
+                overview_exists = False
                 if source_type == 'datagis':
                     try:
                         layer_bbox = self._calculate_bbox_from_postgis(
-                            table_name, geom_column, db_name=self.datagis_db, srid=4326
-                        )
+                            table_name, geom_column, db_name=self.datagis_db, srid=4326)
                         if layer_bbox:
-                            extent_line = f"        EXTENT {layer_bbox}\n        "
+                            extent_line = f"        EXTENT {layer_bbox}\n"
                     except Exception as e:
                         logger.debug(f"      BBOX layer non calculé pour {table_name}: {e}")
-                
+                else:
+                    try:
+                        est_extent, overview_exists = self._datastore_layer_meta(table_name, geom_column)
+                        if est_extent:
+                            extent_line = f"        EXTENT {est_extent}\n"
+                    except Exception as e:
+                        logger.debug(f"      meta datastore non calculée pour {table_name}: {e}")
+
                 # Clustering SERVEUR pour les couches de POINTS : au dézoom, MapServer agrège
                 # les points proches en amas (évite d'afficher des millions de marqueurs, allège
                 # le rendu des tuiles WMS). Sans effet sur les lignes/polygones.
@@ -4395,13 +4439,59 @@ END
                         "        END\n"
                     )
 
-                layer_content = f"""    # Layer pour ressource: {resource_name} (ID: {resource_id})
+                # Métadonnées WMS/WFS communes aux couches de cette ressource
+                meta_block = f"""        METADATA
+            "wms_title" "{resource_name} ({dataset_title})"
+            "wms_srs" "EPSG:4326 EPSG:3857 EPSG:2154"
+            "wms_enable_request" "*"
+            "wfs_title" "{resource_name} ({dataset_title})"
+            "wfs_srs" "EPSG:4326 EPSG:3857 EPSG:2154"
+            "wfs_enable_request" "*"
+            "wfs_getfeature_formatlist" "geojson,application/json; subtype=geojson,application/json,application/gml+xml; version=3.2,text/xml; subtype=gml/3.2.1,text/xml; subtype=gml/3.1.1,text/xml; subtype=gml/2.1.2"
+            "gml_include_items" "all"
+            "gml_featureid" "_id"
+        END"""
+
+                gt_up = (geometry_type or "").upper()
+                if overview_exists and ("LINE" in gt_up or "POLYGON" in gt_up):
+                    # « Clusteriser un peu » les gros jeux LIGNE/POLYGONE : deux couches à ÉCHELLE
+                    # regroupées sous le GROUP `{layer_name}` (ce que le client demande en WMS).
+                    # Au dézoom (denom > CROSS) : couche APERÇU (table `<table>_ov`, échantillon
+                    # simplifié, index GIST dédié) -> quelques 10^5 tracés grossiers, ~50 ms.
+                    # Au zoom serré (denom <= CROSS) : couche DÉTAIL (table complète), l'index GIST
+                    # ne ramène que le visible. Mesuré : tuile nationale 17 s -> ~0,1 s.
+                    CROSS = 2200000
+                    ov_table = f"{table_name}_ov"
+
+                    def _pg_layer(nm, tbl, scale_line):
+                        return f"""    LAYER
+        NAME "{nm}"
+        GROUP "{layer_name}"
+        TYPE {geometry_type}
+        STATUS ON
+{extent_line}        {scale_line}
+        CONNECTIONTYPE POSTGIS
+        CONNECTION "{connection_string}"
+        DATA "{geom_column} FROM \\"{tbl}\\" USING UNIQUE {unique_column} USING SRID={srid}"
+        PROJECTION
+            "init=epsg:{srid}"
+        END
+{style_content}
+{meta_block}
+    END
+"""
+                    layer_content = (
+                        f"    # Layer (2 échelles : détail + aperçu) pour ressource: {resource_name} (ID: {resource_id})\n"
+                        + _pg_layer(f"{layer_name}_hi", table_name, f"MAXSCALEDENOM {CROSS}")
+                        + _pg_layer(f"{layer_name}_ov", ov_table, f"MINSCALEDENOM {CROSS}")
+                    )
+                else:
+                    layer_content = f"""    # Layer pour ressource: {resource_name} (ID: {resource_id})
     LAYER
         NAME "{layer_name}"
         TYPE {geometry_type}
         STATUS ON
-        {extent_line}
-        # Connexion PostGIS
+{extent_line}        # Connexion PostGIS
         CONNECTIONTYPE POSTGIS
         CONNECTION "{connection_string}"
         DATA "{geom_column} FROM \\"{table_name}\\" USING UNIQUE {unique_column} USING SRID={srid}"
@@ -4412,19 +4502,7 @@ END
         END
 {cluster_content}
 {style_content}
-        
-        # Métadonnées du layer
-        METADATA
-            "wms_title" "{resource_name} ({dataset_title})"
-            "wms_srs" "EPSG:4326 EPSG:3857 EPSG:2154"
-            "wms_enable_request" "*"
-            "wfs_title" "{resource_name} ({dataset_title})"
-            "wfs_srs" "EPSG:4326 EPSG:3857 EPSG:2154"
-            "wfs_enable_request" "*"
-            "wfs_getfeature_formatlist" "geojson,application/json; subtype=geojson,application/json,application/gml+xml; version=3.2,text/xml; subtype=gml/3.2.1,text/xml; subtype=gml/3.1.1,text/xml; subtype=gml/2.1.2"
-            "gml_include_items" "all"
-            "gml_featureid" "_id"
-        END
+{meta_block}
     END
 """
                 logger.info(f"      building layer content: finished")

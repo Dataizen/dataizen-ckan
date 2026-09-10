@@ -94,6 +94,12 @@ def dtz_geo_process_job(resource_id, force=False):
         srccol = detect.get('col') or ((detect.get('lat_col') or '') + '/' + (detect.get('lon_col') or ''))
         _geo_set_status(resource_id, 'geometrizing', col=srccol, kind=detect['kind'])
         done, total, gtype = dg.geometrize(resource_id, detect)
+        # Aperçu bas-zoom (échantillon simplifié) pour les gros jeux LIGNE/POLYGONE : bâti AVANT
+        # le mapfile, qui détecte la table `<rid>_ov` et sert deux couches à échelle.
+        try:
+            dg.build_overview(resource_id, gtype, total)
+        except Exception as e:
+            log.warning("[geo] aperçu non bâti pour %s : %s", resource_id, e)
         try:
             pkg = get_action('package_show')(ctx, {'id': res.get('package_id')})
             try:

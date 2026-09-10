@@ -30,6 +30,80 @@ GEOM_COL = "geometry"              # colonne géométrie PostGIS construite (nom
                                    # via _check_geometry_column_exists et sert la couche PostGIS)
 BATCH = 100000                     # lignes par batch (commit à chaque batch)
 
+# Aperçu bas-zoom (« clusteriser un peu ») : au-delà de OVERVIEW_MIN lignes, on matérialise une
+# table `<rid>_ov` = échantillon (1 ligne sur N) + géométries simplifiées. Au dézoom, MapServer
+# sert cet aperçu (quelques centaines de milliers de tracés grossiers, index GIST dédié) au lieu de
+# balayer/transférer les millions de tracés détaillés (17 s -> ~50 ms mesuré sur le réseau BT 7,8 M).
+# Le détail complet reste servi au zoom serré (l'index GIST ne ramène alors que le visible).
+OVERVIEW_MIN = 200000              # en deçà, pas d'aperçu (le détail est déjà rapide au dézoom)
+OVERVIEW_TARGET = 150000           # nombre de tracés visé dans l'aperçu (fixe le pas d'échantillon)
+OVERVIEW_TOL = 0.002               # tolérance de simplification en degrés (~200 m, invisible au national)
+
+
+def overview_table(resource_id):
+    """Nom (non quoté) de la table d'aperçu bas-zoom d'une ressource."""
+    return resource_id + "_ov"
+
+
+def build_overview(resource_id, geom_type, total):
+    """Construit/reconstruit la table d'aperçu `<rid>_ov` (échantillon simplifié) pour les GROS
+    jeux LIGNE/POLYGONE. Idempotent (DROP puis CREATE). Retourne True si un aperçu a été bâti,
+    False sinon (jeu petit, type point, ou géométrie absente). Les points ne sont pas concernés :
+    ils sont déjà agrégés au dézoom par le bloc CLUSTER de MapServer."""
+    try:
+        if not geom_type or total is None:
+            return False
+        gt = str(geom_type).upper()
+        if "LINE" not in gt and "POLYGON" not in gt:
+            return False
+        if int(total) < OVERVIEW_MIN:
+            return False
+    except Exception:
+        return False
+    step = max(2, round(int(total) / OVERVIEW_TARGET))
+    tbl = '"' + resource_id.replace('"', '""') + '"'
+    ovname = overview_table(resource_id)
+    ov = '"' + ovname.replace('"', '""') + '"'
+    ovidx = "ov_gix_" + re.sub(r"[^a-z0-9]", "", resource_id.lower())[:24]
+    conn = _connect()
+    conn.autocommit = True
+    cur = conn.cursor()
+    try:
+        cur.execute("DROP TABLE IF EXISTS {};".format(ov))
+        # Échantillon (_id %% step) + simplification tolérante à la topologie. Le %% échappe le %
+        # pour psycopg2 (pas de paramètre ici, step est un entier validé).
+        cur.execute(
+            "CREATE TABLE {ov} AS SELECT _id, ST_SimplifyPreserveTopology({g}, {tol}) AS {g} "
+            "FROM {t} WHERE {g} IS NOT NULL AND _id %% {step} = 0;".format(
+                ov=ov, g=GEOM_COL, tol=OVERVIEW_TOL, t=tbl, step=step))
+        cur.execute('CREATE INDEX "{}" ON {} USING GIST ({});'.format(ovidx, ov, GEOM_COL))
+        cur.execute("ANALYZE {};".format(ov))
+        cur.execute("SELECT count(*) FROM {};".format(ov))
+        n = cur.fetchone()[0] or 0
+        log.info("[geo] aperçu %s bâti : %s tracés (échantillon 1/%s, simplif %s°)",
+                 ovname, n, step, OVERVIEW_TOL)
+        return True
+    except Exception as e:
+        log.warning("[geo] construction de l'aperçu %s échouée : %s", ovname, e)
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+
+def drop_overview(resource_id):
+    """Supprime la table d'aperçu si présente (nettoyage à la purge d'une ressource)."""
+    ov = '"' + overview_table(resource_id).replace('"', '""') + '"'
+    try:
+        conn = _connect()
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("DROP TABLE IF EXISTS {};".format(ov))
+        cur.close()
+        conn.close()
+    except Exception as e:
+        log.warning("[geo] suppression de l'aperçu de %s échouée : %s", resource_id, e)
+
 # Détection par nom (normalisé : espaces/underscores/casse ignorés).
 POINT_NAMES = {"geopoint", "geopoint2d", "point", "coordonnees", "coordinates", "position", "latlon", "latlong"}
 GEOM_NAMES = {"geoshape", "geoshape2d", "geometry", "geometrie", "geom", "thegeom", "wkt", "geojson", "shape", "contour"}
