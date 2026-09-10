@@ -48,6 +48,72 @@ def _thread_with_session_cleanup(fn):
     return _wrapped
 
 
+def _geo_set_status(resource_id, status, **fields):
+    """Pose l'état du traitement géo sur la ressource (lu par l'indicateur « traitement en
+    cours » du portail) : `dtz_geo_status` + éventuels `dtz_geo_<champ>`."""
+    try:
+        patch = {'id': resource_id, 'dtz_geo_status': status}
+        patch.update({('dtz_geo_' + k): ('' if v is None else str(v)) for k, v in fields.items()})
+        get_action('resource_patch')({'ignore_auth': True}, patch)
+    except Exception as e:
+        log.warning("[geo] maj statut %s -> %s échec : %s", resource_id, status, e)
+
+
+def dtz_geo_process_job(resource_id, force=False):
+    """Job RQ : pour une ressource datastore portant la géo EN COLONNE (Geo Shape/Geo Point/
+    WKT/lat-lon), construit la géométrie PostGIS `_geom` (robuste, batché, en base) puis
+    génère le mapfile (WMS/WFS MapServer). Une fois `_geom` présente, l'engine mapfile
+    existant la reconnaît et sert la couche côté serveur (rendu de l'emprise visible).
+    Idempotent : ne refait pas si déjà prêt (sauf force). Tourne dans le worker CKAN."""
+    from ckanext.ogc import datastore_geo as dg
+    ctx = {'ignore_auth': True}
+    try:
+        try:
+            res = get_action('resource_show')(ctx, {'id': resource_id})
+        except Exception as e:
+            log.warning("[geo] ressource %s introuvable : %s", resource_id, e)
+            return
+        if not res.get('datastore_active'):
+            return
+        st = res.get('dtz_geo_status')
+        if not force and st in ('geometrizing', 'mapfile', 'ready', 'none'):
+            return  # déjà en cours / fait / rien à faire
+        try:
+            ds = get_action('datastore_search')(ctx, {'resource_id': resource_id, 'limit': 5})
+        except Exception as e:
+            log.warning("[geo] datastore_search %s échec : %s", resource_id, e)
+            return
+        detect = dg.detect_geo(ds.get('fields', []), ds.get('records', []))
+        if not detect:
+            _geo_set_status(resource_id, 'none')
+            return
+        srccol = detect.get('col') or ((detect.get('lat_col') or '') + '/' + (detect.get('lon_col') or ''))
+        _geo_set_status(resource_id, 'geometrizing', col=srccol, kind=detect['kind'])
+        done, total, gtype = dg.geometrize(resource_id, detect)
+        try:
+            from ckan import plugins as _pl
+            p = _pl.get_plugin('ogc')
+            pkg = get_action('package_show')(ctx, {'id': res.get('package_id')})
+            if p and pkg.get('name'):
+                p._generate_mapfile_async(pkg['name'])
+        except Exception as e:
+            log.warning("[geo] génération mapfile pour %s échec : %s", resource_id, e)
+        _geo_set_status(resource_id, 'ready', col=srccol, kind=detect['kind'], done=done, total=total, type=gtype)
+        log.info("[geo] ressource %s prête (%s/%s géométries, %s)", resource_id, done, total, gtype)
+    except Exception as e:
+        log.error("[geo] traitement %s échec : %s", resource_id, e, exc_info=True)
+        try:
+            _geo_set_status(resource_id, 'error')
+        except Exception:
+            pass
+    finally:
+        try:
+            from ckan import model
+            model.Session.remove()
+        except Exception:
+            pass
+
+
 # Try to import fiona for Shapefile support
 try:
     import fiona
@@ -1315,6 +1381,36 @@ class OGCPlugin(SingletonPlugin):
             self._cleanup_dataset_mapfile_and_datagis(name, {'name': name, 'resources': resources})
             return {'name': name, 'cleaned': True}
 
+        def dtz_geo_reprocess(context, data_dict):
+            """(Re)construire la géométrie cartographique + le mapfile d'un jeu ou d'une
+            ressource, de façon IDEMPOTENTE. Réservé à un éditeur du jeu (droit package_update)
+            ou à un sysadmin. data_dict : {resource_id} pour une ressource, ou {id|name} pour
+            un jeu (toutes ses ressources datastore). {force:true} refait tout."""
+            rid = data_dict.get('resource_id')
+            name = data_dict.get('name') or data_dict.get('id')
+            force = bool(data_dict.get('force'))
+            internal = {'ignore_auth': True}
+            rids = []
+            if rid:
+                res = get_action('resource_show')(internal, {'id': rid})
+                toolkit.check_access('package_update', context, {'id': res.get('package_id')})
+                rids = [rid]
+            elif name:
+                pkg = get_action('package_show')(internal, {'id': name})
+                toolkit.check_access('package_update', context, {'id': pkg['id']})
+                rids = [r['id'] for r in pkg.get('resources', []) if r.get('datastore_active')]
+            else:
+                raise toolkit.ValidationError({'resource_id': 'resource_id ou name requis'})
+            for r in rids:
+                if force:
+                    try:
+                        get_action('resource_patch')(internal, {'id': r, 'dtz_geo_status': ''})
+                    except Exception:
+                        pass
+                toolkit.enqueue_job(dtz_geo_process_job, [r, force], title=f"dtz geo reprocess {r}")
+            log.info("[geo] re-traitement enfilé pour %s ressource(s) (force=%s)", len(rids), force)
+            return {'enqueued': rids, 'force': force}
+
         # Permettre les requêtes GET (paramètres dans l'URL) comme les actions core
         resource_show_with_ogc.side_effect_free = True
         package_show_with_ogc.side_effect_free = True
@@ -1325,6 +1421,7 @@ class OGCPlugin(SingletonPlugin):
             'package_show': package_show_with_ogc,
             'organization_show': organization_show_with_ogc,
             'ogc_purge_artifacts': ogc_purge_artifacts,
+            'dtz_geo_reprocess': dtz_geo_reprocess,
         }
     
     def after_resource_show(self, context, data_dict):
@@ -1504,7 +1601,17 @@ class OGCPlugin(SingletonPlugin):
                             log.debug(f"Ressource {resource_id} a maintenant datastore_active=True (détecté via resource_show)")
                     except Exception as e:
                         log.warning(f"Impossible de vérifier l'état de la ressource {resource_id}: {e}")
-                
+
+                # Géo EN COLONNE : dès que le datastore est actif, enfiler le job qui construit
+                # la géométrie PostGIS (_geom) puis le mapfile. Idempotent (le job re-vérifie),
+                # garde anti-boucle sur l'état déjà posé (les patchs de statut re-déclenchent ce hook).
+                if datastore_active and resource_id and not data_dict.get('dtz_geo_status'):
+                    try:
+                        toolkit.enqueue_job(dtz_geo_process_job, [resource_id], title=f"dtz geo {resource_id}")
+                        log.info(f"[geo] job de géométrisation enfilé pour {resource_id}")
+                    except Exception as e:
+                        log.warning(f"[geo] enqueue job échec pour {resource_id}: {e}")
+
                 # Déterminer si la ressource est géospatiale et récupérer le nom du dataset (pour mapfile)
                 format_ = data_dict.get('format', '').upper()
                 mimetype = (data_dict.get('mimetype') or '').lower()
