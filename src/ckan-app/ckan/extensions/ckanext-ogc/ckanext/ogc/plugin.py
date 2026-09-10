@@ -54,7 +54,11 @@ def _geo_set_status(resource_id, status, **fields):
     try:
         patch = {'id': resource_id, 'dtz_geo_status': status}
         patch.update({('dtz_geo_' + k): ('' if v is None else str(v)) for k, v in fields.items()})
-        get_action('resource_patch')({'ignore_auth': True}, patch)
+        try:
+            site_user = get_action('get_site_user')({'ignore_auth': True}, {}).get('name')
+        except Exception:
+            site_user = None
+        get_action('resource_patch')({'ignore_auth': True, 'user': site_user}, patch)
     except Exception as e:
         log.warning("[geo] maj statut %s -> %s échec : %s", resource_id, status, e)
 
@@ -91,11 +95,15 @@ def dtz_geo_process_job(resource_id, force=False):
         _geo_set_status(resource_id, 'geometrizing', col=srccol, kind=detect['kind'])
         done, total, gtype = dg.geometrize(resource_id, detect)
         try:
-            from ckan import plugins as _pl
-            p = _pl.get_plugin('ogc')
             pkg = get_action('package_show')(ctx, {'id': res.get('package_id')})
-            if p and pkg.get('name'):
-                p._generate_mapfile_async(pkg['name'])
+            try:
+                from ckan.common import config as _cfg
+                api_key = _cfg.get('ckanext.ogc.ckan_api_key') or ''
+            except Exception:
+                api_key = ''
+            # Génération SYNCHRONE (on est dans le worker) : évite la course des threads
+            # async déclenchés par les patchs de statut. Produit le mapfile + WMS d'org.
+            dg.build_mapfile(pkg, api_key)
         except Exception as e:
             log.warning("[geo] génération mapfile pour %s échec : %s", resource_id, e)
         _geo_set_status(resource_id, 'ready', col=srccol, kind=detect['kind'], done=done, total=total, type=gtype)

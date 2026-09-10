@@ -113,6 +113,31 @@ def _geom_expr(kind, col=None, lat_col=None, lon_col=None):
     raise ValueError("kind inconnu: %s" % kind)
 
 
+def build_mapfile(dataset, ckan_api_key):
+    """Génère le mapfile MapServer (couche PostGIS datastore, colonne `geometry`) pour le
+    dataset, de façon SYNCHRONE — le job géo tourne déjà dans le worker RQ, donc pas besoin
+    du thread async du plugin (qui est en plus racé par les patchs de statut). Réutilise le
+    générateur existant, qui enregistre aussi la couche dans le WMS d'organisation."""
+    import importlib.util
+    path = os.getenv("OGC_MAPFILE_SCRIPT", "/srv/app/ckanext-ogc/scripts/generate-mapfile.py")
+    spec = importlib.util.spec_from_file_location("generate_mapfile", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    gen = mod.MapfileGenerator(
+        ckan_url=os.getenv("CKAN_INTERNAL_URL", "http://ckan:5000"),
+        ckan_api_key=ckan_api_key or "",
+        postgis_host=os.getenv("POSTGIS_HOST", "db"),
+        postgis_port=int(os.getenv("POSTGIS_PORT", "5432")),
+        postgis_db=os.getenv("POSTGIS_DB", "datastore"),
+        postgis_user=os.getenv("POSTGIS_USER", "ckan"),
+        postgis_password=os.getenv("POSTGRES_PASSWORD", "ckan"),
+        mapfiles_dir=os.getenv("MAPFILES_DIR", "/mapserver/mapfiles"),
+        auto_create_geometry=True,
+        use_datagis=False,
+    )
+    return bool(gen.generate_mapfile(dataset))
+
+
 def _connect():
     """Connexion écriture à la base datastore (mêmes creds que le plugin ogc)."""
     import psycopg2
