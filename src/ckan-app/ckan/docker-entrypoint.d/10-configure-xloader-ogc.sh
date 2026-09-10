@@ -69,8 +69,16 @@ ckan config-tool "$CKAN_INI" "ckanext.xloader.api_token=${XLOADER_API_TOKEN:-${C
 ckan config-tool "$CKAN_INI" "ckanext.xloader.site_url=http://ckan:5000"
 ckan config-tool "$CKAN_INI" "ckanext.xloader.auto_index_dates=True"
 ckan config-tool "$CKAN_INI" "ckanext.xloader.auto_index_threshold=3"
-ckan config-tool "$CKAN_INI" "ckanext.xloader.auto_unique_index=True"
+# Index unique pleine-ligne DÉSACTIVÉ : sur une grosse table (millions de lignes, colonnes
+# larges type géométrie) il est très coûteux et sans intérêt ici (la mise à jour d'une
+# ressource fait un remplacement complet, pas d'upsert). Évite que le job d'index dépasse
+# son délai sur les gros fichiers (constaté sur un CSV de 3,7 Go / 7,8 M lignes : données
+# chargées OK, mais création des index en timeout à 3600 s).
+ckan config-tool "$CKAN_INI" "ckanext.xloader.auto_unique_index=False"
 ckan config-tool "$CKAN_INI" "ckanext.xloader.calculate_record_count=True"
+# Délai du job xloader relevé (défaut 3600 s) pour laisser l'indexation des gros fichiers
+# aller au bout ; la donnée reste consultable pendant l'indexation (running_but_viewable).
+ckan config-tool "$CKAN_INI" "ckanext.xloader.job_timeout=21600"
 ckan config-tool "$CKAN_INI" "ckanext.xloader.chunk_size=16384"
 ckan config-tool "$CKAN_INI" "ckanext.xloader.max_content_length=10737418240"
 ckan config-tool "$CKAN_INI" "ckanext.xloader.ssl_verify=False"
