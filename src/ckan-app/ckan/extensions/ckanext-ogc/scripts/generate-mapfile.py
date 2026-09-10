@@ -4460,7 +4460,12 @@ END
                     # simplifié, index GIST dédié) -> quelques 10^5 tracés grossiers, ~50 ms.
                     # Au zoom serré (denom <= CROSS) : couche DÉTAIL (table complète), l'index GIST
                     # ne ramène que le visible. Mesuré : tuile nationale 17 s -> ~0,1 s.
-                    CROSS = 2200000
+                    # CROSS calé pour que l'aperçu (rapide à TOUTE échelle) couvre jusqu'à ~zoom 13
+                    # et que la couche détail ne rende qu'au plus près (zoom 14+), où une tuile 256px
+                    # ne contient plus que quelques tracés. Mesuré en zone dense (Paris) sur testlm1 :
+                    # z11/z12/z13 ~0,1 s (aperçu), z14 0,26 s (détail). Sans ce calage, le détail
+                    # démarrait vers zoom 10-12 et une tuile coûtait 1,7 s à 17 s.
+                    CROSS = 50000
                     ov_table = f"{table_name}_ov"
 
                     def _pg_layer(nm, tbl, scale_line):
