@@ -1,0 +1,9 @@
+{% ckan_extends %}
+
+{# Offre de source AGPL (article 13) : CKAN et ses extensions sont sous AGPL-3.0,
+   qui impose que tout utilisateur interagissant avec le logiciel modifié via le réseau
+   puisse obtenir le code source correspondant. Lien vers le dépôt public du fork. #}
+{% block footer_links %}
+  {{ super() }}
+  <li><a href="https://github.com/Dataizen/dataizen-ckan" target="_blank" rel="noopener">{{ _('Code source') }}</a></li>
+{% endblock %}

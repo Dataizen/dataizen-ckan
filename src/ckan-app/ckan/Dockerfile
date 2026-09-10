@@ -120,6 +120,9 @@ RUN mkdir -p /srv/app/templates/snippets
 COPY templates/snippets/login_form.html /srv/app/templates/snippets/login_form.html
 COPY templates/snippets/login_form_simple.html /srv/app/templates/snippets/login_form_simple.html
 
+# Pied de page : lien « Code source » (offre de source AGPL article 13)
+COPY templates/footer.html /srv/app/templates/footer.html
+
 # Copier le script de maintenance plugin_extras
 COPY fix-plugin-extras.sh /srv/app/fix-plugin-extras.sh
 # Copier et configurer le cron job
