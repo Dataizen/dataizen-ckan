@@ -70,11 +70,11 @@ def build_overview(resource_id, geom_type, total):
     cur = conn.cursor()
     try:
         cur.execute("DROP TABLE IF EXISTS {};".format(ov))
-        # Échantillon (_id %% step) + simplification tolérante à la topologie. Le %% échappe le %
-        # pour psycopg2 (pas de paramètre ici, step est un entier validé).
+        # Échantillon (_id % step) + simplification tolérante à la topologie. On appelle execute()
+        # SANS paramètre : le % est donc littéral (pas de placeholder psycopg2), step est un entier validé.
         cur.execute(
             "CREATE TABLE {ov} AS SELECT _id, ST_SimplifyPreserveTopology({g}, {tol}) AS {g} "
-            "FROM {t} WHERE {g} IS NOT NULL AND _id %% {step} = 0;".format(
+            "FROM {t} WHERE {g} IS NOT NULL AND _id % {step} = 0;".format(
                 ov=ov, g=GEOM_COL, tol=OVERVIEW_TOL, t=tbl, step=step))
         cur.execute('CREATE INDEX "{}" ON {} USING GIST ({});'.format(ovidx, ov, GEOM_COL))
         cur.execute("ANALYZE {};".format(ov))
