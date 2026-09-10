@@ -170,6 +170,7 @@ RUN chmod +x /srv/app/scripts/*.sh /srv/app/scripts/*.py /docker-entrypoint.d/*.
 
 COPY supervisor.d/harvester.conf /etc/supervisord.d/
 COPY supervisor.d/xloader.conf /etc/supervisord.d/
+COPY supervisor.d/geoworker.conf /etc/supervisord.d/
 COPY supervisor.d/cron.conf /etc/supervisord.d/
 
 RUN apt-get update && apt-get install -y sudo procps net-tools curl jq gdal-bin libgdal-dev python3-gdal redis-tools && \

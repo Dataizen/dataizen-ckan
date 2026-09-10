@@ -4275,9 +4275,37 @@ END
                 if style_content is None:
                     # Style par défaut selon le type de géométrie
                     if geometry_type == "POINT":
-                        style_content = """        # Style par défaut (points rouges)
+                        # Deux classes pour rendre lisible le clustering serveur (bloc CLUSTER) :
+                        # un amas (>= 2 points) porte une pastille bleue + l'EFFECTIF en label
+                        # (Cluster_FeatureCount, police Arial-Bold du FONTSET) ; un point isolé
+                        # garde le petit cercle rouge. Sans cluster, seule la 2e classe s'applique.
+                        style_content = """        # Amas de points (clustering serveur) : pastille + effectif
         CLASS
-            NAME "default"
+            NAME "amas"
+            EXPRESSION ([Cluster_FeatureCount] > 1)
+            STYLE
+                COLOR 43 84 150
+                OUTLINECOLOR 255 255 255
+                WIDTH 1
+                SYMBOL "circle_point"
+                SIZE 22
+            END
+            LABEL
+                TEXT "[Cluster_FeatureCount]"
+                FONT "Arial-Bold"
+                TYPE truetype
+                SIZE 8
+                COLOR 255 255 255
+                ALIGN CENTER
+                POSITION cc
+                FORCE true
+                PARTIALS true
+                BUFFER 0
+            END
+        END
+        # Point isolé
+        CLASS
+            NAME "point"
             STYLE
                 COLOR 255 0 0
                 OUTLINECOLOR 0 0 0
@@ -4304,12 +4332,17 @@ END
     END
 """)
                     elif geometry_type == "LINE":
-                        style_content = """        # Style par défaut (lignes rouges)
+                        # Traits lissés et d'épaisseur maîtrisée : sur un réseau dense (ex. réseau
+                        # souterrain BT, millions de tracés) un rouge épais empâte tout ; un bleu
+                        # Dataizen plus fin et antialiasé reste lisible du national au parcellaire.
+                        style_content = """        # Style par défaut (lignes)
         CLASS
             NAME "default"
             STYLE
-                COLOR 255 0 0
-                WIDTH 2
+                COLOR 43 84 150
+                WIDTH 1.4
+                LINECAP round
+                ANTIALIAS true
             END
         END"""
                     else:  # POLYGON par défaut

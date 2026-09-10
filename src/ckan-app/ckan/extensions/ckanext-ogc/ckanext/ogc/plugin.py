@@ -1415,7 +1415,10 @@ class OGCPlugin(SingletonPlugin):
                         get_action('resource_patch')(internal, {'id': r, 'dtz_geo_status': ''})
                     except Exception:
                         pass
-                toolkit.enqueue_job(dtz_geo_process_job, [r, force], title=f"dtz geo reprocess {r}")
+                # Queue dédiée « geo » : un worker séparé traite la géométrisation, pour
+                # qu'un gros job (millions de lignes) ne bloque plus la file xloader.
+                toolkit.enqueue_job(dtz_geo_process_job, [r, force], title=f"dtz geo reprocess {r}",
+                                    queue='geo')
             log.info("[geo] re-traitement enfilé pour %s ressource(s) (force=%s)", len(rids), force)
             return {'enqueued': rids, 'force': force}
 
@@ -1615,7 +1618,8 @@ class OGCPlugin(SingletonPlugin):
                 # garde anti-boucle sur l'état déjà posé (les patchs de statut re-déclenchent ce hook).
                 if datastore_active and resource_id and not data_dict.get('dtz_geo_status'):
                     try:
-                        toolkit.enqueue_job(dtz_geo_process_job, [resource_id], title=f"dtz geo {resource_id}")
+                        toolkit.enqueue_job(dtz_geo_process_job, [resource_id], title=f"dtz geo {resource_id}",
+                                            queue='geo')
                         log.info(f"[geo] job de géométrisation enfilé pour {resource_id}")
                     except Exception as e:
                         log.warning(f"[geo] enqueue job échec pour {resource_id}: {e}")
