@@ -25,7 +25,9 @@ import re
 
 log = logging.getLogger(__name__)
 
-GEOM_COL = "_geom"                 # colonne géométrie PostGIS construite
+GEOM_COL = "geometry"              # colonne géométrie PostGIS construite (nom attendu par
+                                   # l'engine mapfile existant : generate-mapfile.py la détecte
+                                   # via _check_geometry_column_exists et sert la couche PostGIS)
 BATCH = 100000                     # lignes par batch (commit à chaque batch)
 
 # Détection par nom (normalisé : espaces/underscores/casse ignorés).

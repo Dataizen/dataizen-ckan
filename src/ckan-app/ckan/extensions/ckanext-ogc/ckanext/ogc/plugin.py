@@ -559,28 +559,28 @@ class OGCPlugin(SingletonPlugin):
                                 field_names = [f.get('id', '').lower() for f in fields]
                                 field_set = set(field_names)
                                 
-                                # Colonnes géospatiales : correspondance exacte pour éviter faux positifs (ex. "population" contient "lat")
-                                geometry_columns = {
-                                    'geometry', 'geom', 'the_geom', 'shape', 'coordinates',
-                                    'geo_shape', 'geo_point', 'geo_point_2d', 'coord',
-                                    'st_asgeojson', 'geojson', 'latitude', 'longitude', 'lat', 'lon'
+                                # Détection NORMALISÉE (espaces/underscores/tirets ignorés) pour
+                                # attraper « Geo Shape », « Geo Point », the_geom, _geom, etc. sans
+                                # faux positifs type "population". On teste un nom normalisé.
+                                def _n(s):
+                                    return (s or '').lower().replace(' ', '').replace('_', '').replace('-', '')
+                                geom_names = {
+                                    'geometry', 'geom', 'thegeom', 'shape', 'geoshape', 'geoshape2d',
+                                    'geopoint', 'geopoint2d', 'coordinates', 'stasgeojson', 'geojson',
+                                    'wkt', 'contour', 'position',
                                 }
-                                for field_name in field_names:
-                                    if field_name in geometry_columns:
-                                        log.debug(f"Dataset géospatial détecté via colonne: {field_name} (ressource {resource_id})")
+                                norm_names = [_n(fn) for fn in field_names]
+                                for fn, n in zip(field_names, norm_names):
+                                    if n in geom_names or n.endswith('geom'):
+                                        log.debug(f"Dataset géospatial détecté via colonne: {fn} (ressource {resource_id})")
                                         return True
-                                
-                                # Vérifier la paire lat/lon (noms exacts)
-                                has_lat = field_set & {'latitude', 'lat', 'y', 'coord_y'}
-                                has_lon = field_set & {'longitude', 'lon', 'x', 'coord_x'}
+                                # Paire lat/lon (noms normalisés)
+                                norm_set = set(norm_names)
+                                has_lat = norm_set & {'latitude', 'lat', 'ylat'}
+                                has_lon = norm_set & {'longitude', 'lon', 'lng', 'long', 'xlon'}
                                 if has_lat and has_lon:
                                     log.debug(f"Dataset géospatial détecté via colonnes lat/lon (ressource {resource_id})")
                                     return True
-                                # Colonnes contenant un mot géospatial (ex. geo_*, *_geom) sans faux positifs type "population"
-                                for fn in field_names:
-                                    if fn.startswith('geo_') or fn.endswith('_geom') or fn == 'geom':
-                                        log.debug(f"Dataset géospatial détecté via colonne: {fn} (ressource {resource_id})")
-                                        return True
                         elif response.status_code == 404:
                             # Datastore pas encore créé, pas d'erreur
                             log.debug(f"Datastore pas encore créé pour ressource {resource_id}, ignoré pour l'instant")
