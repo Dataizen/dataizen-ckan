@@ -4341,6 +4341,19 @@ END
                     except Exception as e:
                         logger.debug(f"      BBOX layer non calculé pour {table_name}: {e}")
                 
+                # Clustering SERVEUR pour les couches de POINTS : au dézoom, MapServer agrège
+                # les points proches en amas (évite d'afficher des millions de marqueurs, allège
+                # le rendu des tuiles WMS). Sans effet sur les lignes/polygones.
+                cluster_content = ""
+                if (geometry_type or "").upper() == "POINT":
+                    cluster_content = (
+                        "        # Agrégation des points proches au dézoom\n"
+                        "        CLUSTER\n"
+                        "            MAXDISTANCE 30\n"
+                        "            REGION \"ellipse\"\n"
+                        "        END\n"
+                    )
+
                 layer_content = f"""    # Layer pour ressource: {resource_name} (ID: {resource_id})
     LAYER
         NAME "{layer_name}"
@@ -4351,12 +4364,12 @@ END
         CONNECTIONTYPE POSTGIS
         CONNECTION "{connection_string}"
         DATA "{geom_column} FROM \\"{table_name}\\" USING UNIQUE {unique_column} USING SRID={srid}"
-        
+
         # Projection (utiliser le SRID détecté)
         PROJECTION
             "init=epsg:{srid}"
         END
-        
+{cluster_content}
 {style_content}
         
         # Métadonnées du layer
