@@ -1,7 +1,7 @@
 #!/bin/bash
 echo "Initialisation des permissions du DataStore..."
 
-ckan -c /srv/app/ckan.ini datastore set-permissions | psql postgresql://datapusher:iTAcdBEcee6GQmJM@db/postgres
+ckan -c /srv/app/ckan.ini datastore set-permissions | psql postgresql://datapusher:datapusher@db/postgres
 
 if [ $? -eq 0 ]; then
   echo "Permissions du DataStore appliquées avec succès."

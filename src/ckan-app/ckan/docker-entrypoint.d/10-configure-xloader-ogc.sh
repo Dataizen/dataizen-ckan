@@ -72,14 +72,14 @@ ckan config-tool "$CKAN_INI" "ckanext.xloader.auto_index_threshold=3"
 ckan config-tool "$CKAN_INI" "ckanext.xloader.auto_unique_index=True"
 ckan config-tool "$CKAN_INI" "ckanext.xloader.calculate_record_count=True"
 ckan config-tool "$CKAN_INI" "ckanext.xloader.chunk_size=16384"
-ckan config-tool "$CKAN_INI" "ckanext.xloader.max_content_length=100485760"
+ckan config-tool "$CKAN_INI" "ckanext.xloader.max_content_length=10737418240"
 ckan config-tool "$CKAN_INI" "ckanext.xloader.ssl_verify=False"
-ckan config-tool "$CKAN_INI" "ckanext.xloader.jobs_db.uri=postgresql://datapusher:${DATAPUSHER_PWD:-iTAcdBEcee6GQmJM}@db/datapusher_jobs"
+ckan config-tool "$CKAN_INI" "ckanext.xloader.jobs_db.uri=postgresql://datapusher:${DATAPUSHER_PWD:-datapusher}@db/datapusher_jobs"
 ckan config-tool "$CKAN_INI" "ckanext.xloader.debug=True"
 # Configuration du logging pour xloader - capturer toutes les erreurs
 ckan config-tool "$CKAN_INI" "ckanext.xloader.log_level=DEBUG"
-ckan config-tool "$CKAN_INI" "ckan.datastore.write_url=postgresql://datapusher:${DATAPUSHER_PWD:-iTAcdBEcee6GQmJM}@db/datastore"
-ckan config-tool "$CKAN_INI" "ckan.datastore.read_url=postgresql://datapusher:${DATAPUSHER_PWD:-iTAcdBEcee6GQmJM}@db/datastore"
+ckan config-tool "$CKAN_INI" "ckan.datastore.write_url=postgresql://datapusher:${DATAPUSHER_PWD:-datapusher}@db/datastore"
+ckan config-tool "$CKAN_INI" "ckan.datastore.read_url=postgresql://datapusher:${DATAPUSHER_PWD:-datapusher}@db/datastore"
 
 # Configuration des queues RQ pour éviter les warnings
 # Par défaut, CKAN utilise la queue "default" si ces options ne sont pas définies
