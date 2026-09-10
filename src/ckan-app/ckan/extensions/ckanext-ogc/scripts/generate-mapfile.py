@@ -2316,6 +2316,9 @@ class MapfileGenerator:
     UNITS DD
     SHAPEPATH "/mapserver/data"
     IMAGECOLOR 255 255 255
+    # Police des labels (effectif des amas de clustering) : alias définis dans le
+    # conteneur mapserver (Arial-Bold -> DejaVuSans-Bold). Indispensable au rendu des LABEL.
+    FONTSET "/mapserver/fonts/fonts.list"
 
     # Sortie GeoJSON pour le WFS (GetFeature OUTPUTFORMAT=geojson) et clients web
     OUTPUTFORMAT
@@ -3146,6 +3149,9 @@ END
     UNITS DD
     SHAPEPATH "/mapserver/data"
     IMAGECOLOR 255 255 255
+    # Police des labels (effectif des amas de clustering) : alias définis dans le
+    # conteneur mapserver (Arial-Bold -> DejaVuSans-Bold). Indispensable au rendu des LABEL.
+    FONTSET "/mapserver/fonts/fonts.list"
 
     # Sortie GeoJSON pour le WFS (GetFeature OUTPUTFORMAT=geojson) et clients web
     OUTPUTFORMAT
@@ -3155,8 +3161,7 @@ END
         FORMATOPTION "STORAGE=stream"
         FORMATOPTION "FORM=SIMPLE"
     END
-    FONTSET "/mapserver/fonts/fonts.list"
-    
+
     # Configuration
     CONFIG "PROJ_LIB" "/usr/share/proj"
     CONFIG "MS_ERRORFILE" "/mapserver/logs/{dataset_name}_error.log"
@@ -3931,6 +3936,9 @@ END
     UNITS DD
     SHAPEPATH "/mapserver/data"
     IMAGECOLOR 255 255 255
+    # Police des labels (effectif des amas de clustering) : alias définis dans le
+    # conteneur mapserver (Arial-Bold -> DejaVuSans-Bold). Indispensable au rendu des LABEL.
+    FONTSET "/mapserver/fonts/fonts.list"
 
     # Sortie GeoJSON pour le WFS (GetFeature OUTPUTFORMAT=geojson) et clients web
     OUTPUTFORMAT
@@ -4438,6 +4446,9 @@ END
     UNITS DD
     SHAPEPATH "/mapserver/data"
     IMAGECOLOR 255 255 255
+    # Police des labels (effectif des amas de clustering) : alias définis dans le
+    # conteneur mapserver (Arial-Bold -> DejaVuSans-Bold). Indispensable au rendu des LABEL.
+    FONTSET "/mapserver/fonts/fonts.list"
 
     # Sortie GeoJSON pour le WFS (GetFeature OUTPUTFORMAT=geojson) et clients web
     OUTPUTFORMAT
