@@ -1,0 +1,160 @@
+{% ckan_extends %}
+
+{% block primary_content_inner %}
+  {{ super() }}
+  {% if h.check_access('package_update', {'id': pkg.id}) %}
+  <div class="module module-sync-dataset panel panel-default" style="margin-top: 24px;">
+    <div class="panel-heading">
+      <h3 class="panel-title"><i class="fa fa-cogs"></i> {{ _('Synchronisation OGC / MapServer') }}</h3>
+    </div>
+    <div class="panel-body">
+      <p class="text-muted">{{ _('Lancer la génération du mapfile, la synchronisation pygeoapi ou l\'import datagis pour ce dataset uniquement.') }}</p>
+      <div class="dataset-sync-buttons" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+        <button type="button" class="btn btn-default btn-dataset-generate-mapfile" data-dataset-id="{{ pkg.id }}" data-dataset-name="{{ pkg.name }}">
+          <i class="fa fa-map"></i> {{ _('Générer mapfile') }}
+        </button>
+        <button type="button" class="btn btn-default btn-dataset-sync-pygeoapi" data-dataset-id="{{ pkg.id }}" data-dataset-name="{{ pkg.name }}">
+          <i class="fa fa-sync"></i> {{ _('Synchroniser pygeoapi') }}
+        </button>
+        <button type="button" class="btn btn-default btn-dataset-import-datagis" data-dataset-id="{{ pkg.id }}" data-dataset-name="{{ pkg.name }}">
+          <i class="fa fa-database"></i> {{ _('Import Datagis') }}
+        </button>
+      </div>
+      <p class="text-warning" style="margin-top: 8px; margin-bottom: 0;"><small><i class="fa fa-exclamation-triangle"></i> {{ _('Attention : « Générer mapfile » réinitialise les SLD.') }}</small></p>
+      <div class="sync-dataset-message" style="margin-top: 10px; min-height: 24px;"></div>
+    </div>
+  </div>
+  <script>
+  (function() {
+    var apiActionUrl = '/api/action/';
+    var datagisPollTimer = null;
+
+    function getMessageElement() {
+      return document.querySelector('.sync-dataset-message');
+    }
+
+    function setMessage(html) {
+      var msgEl = getMessageElement();
+      if (msgEl) {
+        msgEl.innerHTML = html;
+      }
+    }
+
+    function stopDatagisPolling() {
+      if (datagisPollTimer) {
+        window.clearTimeout(datagisPollTimer);
+        datagisPollTimer = null;
+      }
+    }
+
+    function pollDatagisStatus(jobId, datasetId, btn) {
+      fetch(apiActionUrl + 'dataset_import_datagis_status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ job_id: jobId, dataset_id: datasetId })
+      }).then(function(r) { return r.json(); }).then(function(res) {
+        if (!res.success && res.status === 'failed') {
+          setMessage('<span class="text-danger"><i class="fa fa-exclamation-triangle"></i> ' + (res.error || '{{ _("Erreur") }}') + '</span>');
+          if (btn) btn.disabled = false;
+          stopDatagisPolling();
+          return;
+        }
+        if (!res.success && res.status !== 'queued' && res.status !== 'running' && res.status !== 'started' && res.status !== 'finished') {
+          setMessage('<span class="text-danger"><i class="fa fa-exclamation-triangle"></i> ' + (res.error || res.msg || '{{ _("Erreur") }}') + '</span>');
+          if (btn) btn.disabled = false;
+          stopDatagisPolling();
+          return;
+        }
+
+        if (res.status === 'queued') {
+          setMessage('<span class="text-muted"><i class="fa fa-clock-o"></i> {{ _("Import en attente...") }}</span>');
+          datagisPollTimer = window.setTimeout(function() { pollDatagisStatus(jobId, datasetId, btn); }, 2000);
+          return;
+        }
+
+        if (res.status === 'running' || res.status === 'started') {
+          var n = res.progress_current;
+          var total = res.progress_total;
+          var progressText = (n != null && total != null) ? (' ' + n + '/' + total + ' {{ _("ressources") }}') : '';
+          setMessage('<span class="text-info"><i class="fa fa-spinner fa-spin"></i> {{ _("Import Datagis en cours...") }}' + progressText + '</span>');
+          datagisPollTimer = window.setTimeout(function() { pollDatagisStatus(jobId, datasetId, btn); }, 2000);
+          return;
+        }
+
+        if (res.status === 'finished' || res.status === 'completed') {
+          setMessage('<span class="text-success"><i class="fa fa-check"></i> {{ _("Import Datagis terminé.") }}</span>');
+          if (btn) btn.disabled = false;
+          stopDatagisPolling();
+          return;
+        }
+
+        if (res.status === 'failed') {
+          setMessage('<span class="text-danger"><i class="fa fa-exclamation-triangle"></i> ' + (res.error || '{{ _("Erreur") }}') + '</span>');
+          if (btn) btn.disabled = false;
+          stopDatagisPolling();
+          return;
+        }
+
+        setMessage('<span class="text-info"><i class="fa fa-spinner fa-spin"></i> {{ _("Import en cours...") }}</span>');
+        datagisPollTimer = window.setTimeout(function() { pollDatagisStatus(jobId, datasetId, btn); }, 2000);
+      }).catch(function(err) {
+        setMessage('<span class="text-danger"><i class="fa fa-exclamation-triangle"></i> ' + (err.message || '{{ _("Erreur réseau") }}') + '</span>');
+        if (btn) btn.disabled = false;
+        stopDatagisPolling();
+      });
+    }
+
+    function apiCall(action, data, btn, done, options) {
+      options = options || {};
+      if (!getMessageElement()) return;
+      setMessage('<span class="text-muted"><i class="fa fa-spinner fa-spin"></i> {{ _("En cours...") }}</span>');
+      if (btn) btn.disabled = true;
+      fetch(apiActionUrl + action, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(data)
+      }).then(function(r) { return r.json(); }).then(function(res) {
+        if (res.success) {
+          if (!options.deferSuccessMessage) {
+            setMessage('<span class="text-success"><i class="fa fa-check"></i> ' + (res.message || '{{ _("Terminé.") }}') + '</span>');
+          }
+        } else {
+          setMessage('<span class="text-danger"><i class="fa fa-exclamation-triangle"></i> ' + (res.error || res.msg || '{{ _("Erreur") }}') + '</span>');
+        }
+        if (btn && !options.keepDisabled) btn.disabled = false;
+        if (done) done(res);
+      }).catch(function(err) {
+        setMessage('<span class="text-danger"><i class="fa fa-exclamation-triangle"></i> ' + (err.message || '{{ _("Erreur réseau") }}') + '</span>');
+        if (btn) btn.disabled = false;
+        if (done) done({ success: false });
+      });
+    }
+    document.querySelectorAll('.btn-dataset-generate-mapfile').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        apiCall('dataset_generate_mapfile', { dataset_id: btn.getAttribute('data-dataset-id') }, btn);
+      });
+    });
+    document.querySelectorAll('.btn-dataset-sync-pygeoapi').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        apiCall('dataset_sync_pygeoapi', { dataset_id: btn.getAttribute('data-dataset-id') }, btn);
+      });
+    });
+    document.querySelectorAll('.btn-dataset-import-datagis').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        stopDatagisPolling();
+        apiCall('dataset_import_datagis', { dataset_id: btn.getAttribute('data-dataset-id') }, btn, function(res) {
+          if (res && res.success && res.job_id) {
+            setMessage('<span class="text-info"><i class="fa fa-clock-o"></i> {{ _("Import Datagis lancé en arrière-plan...") }}</span>');
+            pollDatagisStatus(res.job_id, btn.getAttribute('data-dataset-id'), btn);
+          } else if (btn) {
+            btn.disabled = false;
+          }
+        }, { deferSuccessMessage: true, keepDisabled: true });
+      });
+    });
+  })();
+  </script>
+  {% endif %}
+{% endblock %}

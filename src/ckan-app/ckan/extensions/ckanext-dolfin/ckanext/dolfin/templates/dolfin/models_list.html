@@ -1,0 +1,51 @@
+{% extends "page.html" %}
+
+{% block subtitle %}{{ _('Modèles DOLFIN') }}{% endblock %}
+
+{% block breadcrumb_content %}
+  <li class="active"><a href="#">{{ _('Modèles DOLFIN') }}</a></li>
+{% endblock %}
+
+{% block primary_content %}
+<section class="module">
+  <div class="module-content">
+    <h1 class="page-heading">{{ _('Modèles DOLFIN') }}</h1>
+    <p class="text-muted">
+      {{ _('Modèles canoniques (pivot) proposés lors de l\'harmonisation d\'un jeu. Les modèles intégrés sont fournis par la plateforme ; tu peux en créer et en éditer d\'autres (compilés/validés au format .dolfin).') }}
+    </p>
+    <p>
+      <a href="{{ h.url_for('dolfin.model_new') }}" class="btn btn-primary"><i class="fa fa-plus"></i> {{ _('Nouveau modèle') }}</a>
+    </p>
+    <table class="table table-bordered table-striped">
+      <thead>
+        <tr>
+          <th>{{ _('Titre') }}</th><th>{{ _('Type') }}</th><th>{{ _('Champs') }}</th>
+          <th>{{ _('Géo') }}</th><th>{{ _('Origine') }}</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in models %}
+        <tr>
+          <td>{{ m.titre }}</td>
+          <td><code>{{ m.type }}</code></td>
+          <td>{% for c in m.champs %}<code>{{ c }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td>
+          <td>{{ '✔' if m.geo else '' }}</td>
+          <td>{% if m.builtin %}<span class="label label-default">{{ _('intégré') }}</span>{% else %}<span class="label label-info">{{ _('personnalisé') }}</span>{% endif %}</td>
+          <td>
+            {% if not m.builtin %}
+              <a href="{{ h.url_for('dolfin.model_edit', slug=m.slug) }}" class="btn btn-default btn-xs"><i class="fa fa-pencil"></i> {{ _('Éditer') }}</a>
+              <form method="post" action="{{ h.url_for('dolfin.model_delete', slug=m.slug) }}" style="display:inline" onsubmit="return confirm('{{ _('Supprimer ce modèle ?') }}');">
+                {{ h.csrf_input() if h.csrf_input }}
+                <button type="submit" class="btn btn-danger btn-xs"><i class="fa fa-trash"></i></button>
+              </form>
+            {% else %}
+              <a href="{{ h.url_for('dolfin.model_edit', slug=m.slug) }}" class="btn btn-default btn-xs"><i class="fa fa-copy"></i> {{ _('Dupliquer') }}</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

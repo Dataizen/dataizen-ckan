@@ -1,0 +1,23 @@
+{% extends "page.html" %}
+
+{% block subtitle %}{{ _('View SLD Style') }} - {{ resource.name or resource.id }}{% endblock %}
+
+{% block breadcrumb_content %}
+  <li>{% link_for _('Datasets'), named_route='dataset.search' %}</li>
+  <li class="active">{% link_for pkg_dict.title|truncate(30), named_route='dataset.read', id=pkg_dict.name %}</li>
+  <li class="active">{% link_for resource.name or _('Resource'), named_route='resource.read', id=pkg_dict.name, resource_id=resource.id %}</li>
+  <li class="active">{{ _('View SLD Style') }}</li>
+{% endblock %}
+
+{% block primary_content_inner %}
+  <h1 class="page-heading">{{ _('View SLD Style') }} – {{ resource.name or resource.id }}</h1>
+  <div class="form-actions" style="margin-bottom: 20px;">
+    <a href="{{ h.url_for('ogc.edit_sld_resource', org_id=pkg_dict.organization.name, dataset_id=pkg_dict.id, resource_id=resource.id) }}" class="btn btn-primary">{{ _('Edit SLD Style') }}</a>
+    <a href="{{ h.url_for('resource.read', id=pkg_dict.name, resource_id=resource.id) }}" class="btn btn-default">{{ _('Back to Resource') }}</a>
+    <a href="{{ h.url_for('ogc.get_sld_resource', org_id=pkg_dict.organization.name, dataset_id=pkg_dict.id, resource_id=resource.id, format='xml') }}" class="btn btn-info" target="_blank">{{ _('Download XML') }}</a>
+  </div>
+  <div class="form-group">
+    <label><strong>{{ _('SLD XML Content') }}</strong></label>
+    <pre style="background: #f5f5f5; padding: 15px; border: 1px solid #ddd; border-radius: 3px; font-family: monospace; font-size: 12px; max-height: 600px; overflow-y: auto; white-space: pre-wrap; word-wrap: break-word;">{{ sld_xml }}</pre>
+  </div>
+{% endblock %}

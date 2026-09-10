@@ -1,0 +1,87 @@
+{% ckan_extends %}
+
+{% block resources %}
+  {{ super() }}
+  
+  {# Vérifier si le dataset est géospatial via helper Python #}
+  {% set is_geospatial = h.is_geospatial_dataset(package) %}
+  
+  {# Vérifier si le dataset a une organisation (peut être dans package.organization ou package.owner_org) #}
+  {% set has_org = package.organization or package.owner_org %}
+  
+  {% if is_geospatial and has_org %}
+    {% set dataset_name = package.name %}
+    {% set org_name = package.organization.name if package.organization else (package.owner_org if package.owner_org else None) %}
+    {% set mapserver_url = h.get_mapserver_url() %}
+    {% set ckan_site_url = h.get_ogc_base_url() %}
+    {% set wms_url = mapserver_url ~ '/wms?map=/mapserver/mapfiles/' ~ dataset_name ~ '.map' %}
+    {% set wfs_url = mapserver_url ~ '/wfs?map=/mapserver/mapfiles/' ~ dataset_name ~ '.map' %}
+    {% set wms_proxy_url = (ckan_site_url + '/wms/' + org_name + '?SERVICE=WMS&VERSION=1.1.0&REQUEST=GetCapabilities&LAYERS=' + dataset_name) if org_name else '' %}
+    
+    <div class="ogc-dataset-buttons" style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+      <button onclick="if(typeof copyToClipboardOGC==='function'){copyToClipboardOGC('{{ wfs_url }}', this);}else{alert('Fonction de copie non disponible');}" class="btn btn-xs btn-primary" style="font-size: 11px; padding: 2px 6px;">
+        QGIS/ArcGIS (WFS)
+      </button>
+      <button onclick="if(typeof copyToClipboardOGC==='function'){copyToClipboardOGC('{{ wms_url }}', this);}else{alert('Fonction de copie non disponible');}" class="btn btn-xs btn-primary" style="font-size: 11px; padding: 2px 6px;">
+        QGIS/ArcGIS (WMS)
+      </button>
+      {% if wms_proxy_url %}
+        <button onclick="if(typeof copyToClipboardOGC==='function'){copyToClipboardOGC('{{ wms_proxy_url }}', this);}else{alert('Fonction de copie non disponible');}" class="btn btn-xs btn-success" style="font-size: 11px; padding: 2px 6px;">
+          QGIS/ArcGIS (WMS + SLD)
+        </button>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}
+
+{% block package_item %}
+  {{ super() }}
+  <script>
+    (function() {
+      if (typeof window.copyToClipboardOGC === 'undefined') {
+        window.copyToClipboardOGC = function(text, button) {
+          if (!navigator.clipboard) {
+            var textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-999999px";
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+              document.execCommand('copy');
+              var originalText = button.textContent;
+              button.textContent = 'Copié!';
+              button.classList.add('btn-success');
+              button.classList.remove('btn-primary');
+              setTimeout(function() {
+                button.textContent = originalText;
+                button.classList.remove('btn-success');
+                button.classList.add('btn-primary');
+              }, 2000);
+            } catch (err) {
+              alert('Erreur lors de la copie. URL: ' + text);
+            }
+            document.body.removeChild(textArea);
+            return;
+          }
+          
+          navigator.clipboard.writeText(text).then(function() {
+            var originalText = button.textContent;
+            button.textContent = 'Copié!';
+            button.classList.add('btn-success');
+            button.classList.remove('btn-primary');
+            setTimeout(function() {
+              button.textContent = originalText;
+              button.classList.remove('btn-success');
+              button.classList.add('btn-primary');
+            }, 2000);
+          }, function(err) {
+            console.error('Erreur lors de la copie: ', err);
+            alert('Erreur lors de la copie. URL: ' + text);
+          });
+        };
+      }
+    })();
+  </script>
+{% endblock %}
+

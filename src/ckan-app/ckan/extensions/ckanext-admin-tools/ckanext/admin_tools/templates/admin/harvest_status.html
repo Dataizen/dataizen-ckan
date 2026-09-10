@@ -1,0 +1,199 @@
+{% extends "admin/base.html" %}
+
+{% block primary_content_inner %}
+  <h1>{{ _('État des moissonnages') }}</h1>
+  
+  <div id="harvest-status" style="margin-top: 20px;">
+    <p class="text-muted">{{ _('Chargement...') }}</p>
+  </div>
+  
+  <button id="refresh-status-btn" class="btn btn-default" style="margin-top: 15px;">
+    <i class="fa fa-refresh"></i> {{ _('Actualiser') }}
+  </button>
+
+  <script>
+    (function() {
+      // Attendre que jQuery soit disponible
+      function initHarvestStatus() {
+        if (typeof jQuery === 'undefined') {
+          setTimeout(initHarvestStatus, 100);
+          return;
+        }
+        var $ = jQuery;
+        
+        // Fonction pour échapper le HTML
+        function escapeHtml(text) {
+          var map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+          };
+          return (text || '').replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+        
+        function loadHarvestStatus() {
+          $('#harvest-status').html('<p class="text-muted">{{ _("Chargement...") }}</p>');
+          
+          $.ajax({
+          url: '/api/action/admin_get_harvest_status',
+          method: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({}),
+          success: function(data) {
+            if (data.success && data.result) {
+              var result = data.result;
+              var html = '<div class="panel panel-info">';
+              html += '<div class="panel-heading"><h3 class="panel-title">{{ _("Résumé") }}</h3></div>';
+              html += '<div class="panel-body">';
+              html += '<p><strong>{{ _("Sources actives") }}:</strong> ' + (result.active_sources_count || 0) + '</p>';
+              html += '<p><strong>{{ _("Jobs en cours") }}:</strong> ' + (result.running_jobs_count || 0) + '</p>';
+              html += '</div></div>';
+              
+              if (result.jobs && result.jobs.length > 0) {
+                html += '<h3>{{ _("Jobs en cours") }}</h3>';
+                html += '<div class="table-responsive"><table class="table table-striped">';
+                html += '<thead><tr>';
+                html += '<th>{{ _("Source") }}</th>';
+                html += '<th>{{ _("Statut") }}</th>';
+                html += '<th>{{ _("Créé") }}</th>';
+                html += '<th>{{ _("Progression") }}</th>';
+                html += '<th>{{ _("Actions") }}</th>';
+                html += '</tr></thead><tbody>';
+                
+                result.jobs.forEach(function(job) {
+                  html += '<tr>';
+                  // Afficher le titre de la source plutôt que l'ID
+                  var sourceTitle = job.source_title || job.source_id || 'N/A';
+                  html += '<td><strong>' + escapeHtml(sourceTitle) + '</strong></td>';
+                  html += '<td><span class="label label-' + (job.status === 'Running' ? 'warning' : 'info') + '">' + (job.status || 'N/A') + '</span></td>';
+                  html += '<td>' + (job.created ? new Date(job.created).toLocaleString() : 'N/A') + '</td>';
+                  html += '<td>';
+                  var progress = job.progress || 0;
+                  var totalObjects = job.total_objects || 0;
+                  var completedObjects = 0;
+                  if (job.status_counts) {
+                    completedObjects = (job.status_counts['COMPLETE'] || 0) + (job.status_counts['ERROR'] || 0);
+                  } else if (totalObjects > 0 && progress > 0) {
+                    // Estimer le nombre d'objets complétés à partir de la progression
+                    completedObjects = Math.round((progress / 100) * totalObjects);
+                  }
+                  html += '<div class="progress" style="margin-bottom: 5px;">';
+                  html += '<div class="progress-bar progress-bar-striped' + (job.status === 'Running' ? ' active' : '') + '" role="progressbar" style="width: ' + Math.min(Math.max(progress, 0), 100) + '%; min-width: 2em;">' + Math.round(progress) + '%</div>';
+                  html += '</div>';
+                  if (totalObjects > 0) {
+                    html += '<small>' + completedObjects + ' / ' + totalObjects + ' {{ _("objets traités") }}</small>';
+                  } else {
+                    html += '<small class="text-muted">{{ _("Calcul en cours...") }}</small>';
+                  }
+                  html += '</td>';
+                  html += '<td>';
+                  // Bouton pour arrêter le job
+                  if (job.status === 'Running' || job.status === 'New') {
+                    html += '<button class="btn btn-xs btn-danger" onclick="abortJob(\'' + (job.id || '') + '\', \'' + escapeHtml(sourceTitle) + '\')" title="{{ _("Arrêter le job") }}">';
+                    html += '<i class="fa fa-stop"></i> {{ _("Arrêter") }}';
+                    html += '</button>';
+                  } else {
+                    html += '<span class="text-muted">{{ _("Terminé") }}</span>';
+                  }
+                  html += '</td>';
+                  html += '</tr>';
+                });
+                
+                html += '</tbody></table></div>';
+              } else {
+                html += '<div class="alert alert-info">{{ _("Aucun job en cours") }}</div>';
+              }
+              
+              if (result.sources && result.sources.length > 0) {
+                html += '<h3 style="margin-top: 30px;">{{ _("Sources actives") }}</h3>';
+                html += '<div class="table-responsive"><table class="table table-striped">';
+                html += '<thead><tr>';
+                html += '<th>{{ _("Titre") }}</th>';
+                html += '<th>{{ _("Type") }}</th>';
+                html += '<th>{{ _("URL") }}</th>';
+                html += '</tr></thead><tbody>';
+                
+                result.sources.forEach(function(source) {
+                  html += '<tr>';
+                  html += '<td>' + source.title + '</td>';
+                  html += '<td>' + source.type + '</td>';
+                  html += '<td><a href="' + source.url + '" target="_blank">' + source.url + '</a></td>';
+                  html += '</tr>';
+                });
+                
+                html += '</tbody></table></div>';
+              }
+              
+              $('#harvest-status').html(html);
+            } else {
+              var errorMsg = (data.result && data.result.error) || data.error || '{{ _("Erreur inconnue") }}';
+              $('#harvest-status').html(
+                '<div class="alert alert-danger">' +
+                '<i class="fa fa-exclamation-triangle"></i> {{ _("Erreur") }}: ' + errorMsg +
+                '</div>'
+              );
+            }
+          },
+          error: function() {
+            $('#harvest-status').html(
+              '<div class="alert alert-danger">' +
+              '<i class="fa fa-exclamation-triangle"></i> {{ _("Erreur de communication avec le serveur") }}' +
+              '</div>'
+            );
+          }
+        });
+      }
+      
+        // Fonction pour arrêter un job
+        window.abortJob = function(jobId, sourceTitle) {
+          if (!confirm('{{ _("Êtes-vous sûr de vouloir arrêter le job pour") }} "' + sourceTitle + '" ?')) {
+            return;
+          }
+          
+          $.ajax({
+            url: '/api/action/admin_abort_harvest_job',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({job_id: jobId}),
+            success: function(data) {
+              if (data.success) {
+                alert('{{ _("Job arrêté avec succès") }}');
+                loadHarvestStatus(); // Recharger l'état
+              } else {
+                alert('{{ _("Erreur") }}: ' + (data.error || '{{ _("Erreur inconnue") }}'));
+              }
+            },
+            error: function(xhr) {
+              var errorMsg = '{{ _("Erreur de communication") }}';
+              try {
+                var errorData = JSON.parse(xhr.responseText);
+                errorMsg = errorData.error || errorMsg;
+              } catch(e) {}
+              alert('{{ _("Erreur") }}: ' + errorMsg);
+            }
+          });
+        };
+        
+        $('#refresh-status-btn').on('click', function() {
+          loadHarvestStatus();
+        });
+        
+        // Charger au démarrage
+        loadHarvestStatus();
+        
+        // Actualiser automatiquement toutes les 30 secondes
+        setInterval(loadHarvestStatus, 30000);
+      }
+      
+      // Initialiser quand le DOM est prêt
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initHarvestStatus);
+      } else {
+        initHarvestStatus();
+      }
+    })();
+  </script>
+{% endblock %}
+

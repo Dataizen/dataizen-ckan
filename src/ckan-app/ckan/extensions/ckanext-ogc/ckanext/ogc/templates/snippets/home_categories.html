@@ -1,0 +1,122 @@
+{% set categories = h.get_categories() %}
+{% if categories %}
+  <section class="categories-section">
+    <h2 class="section-title">{{ _('Catégories') }}</h2>
+    <div class="categories-grid">
+      {% for category in categories[:8] %}
+        <a href="{{ h.url_for('group.read', id=category.name) }}" class="category-card">
+          {% if category.image_url %}
+            <div class="category-image" style="background-image: url('{{ category.image_url }}');"></div>
+          {% else %}
+            <div class="category-image category-image-placeholder">
+              <span class="category-icon"></span>
+            </div>
+          {% endif %}
+          <div class="category-content">
+            <h3 class="category-title">{{ category.title or category.name }}</h3>
+            {% if category.description %}
+              <p class="category-description">{{ category.description[:100] }}{% if category.description|length > 100 %}...{% endif %}</p>
+            {% endif %}
+            <div class="category-meta">
+              <span class="category-count">{{ category.package_count }} dataset{{ 's' if category.package_count != 1 else '' }}</span>
+            </div>
+          </div>
+        </a>
+      {% endfor %}
+    </div>
+    {% if categories|length > 8 %}
+      <div class="categories-more">
+        <a href="{{ h.url_for('group.index') }}" class="btn btn-primary">{{ _('Voir toutes les catégories') }}</a>
+      </div>
+    {% endif %}
+  </section>
+
+  <style>
+    .categories-section {
+      margin: 2rem 0;
+      padding: 1.5rem;
+    }
+    .categories-section .section-title {
+      margin-bottom: 1.5rem;
+      font-size: 1.75rem;
+      color: #333;
+    }
+    .categories-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 0.75rem;
+    }
+    .category-card {
+      display: block;
+      background: #fff;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      overflow: hidden;
+      text-decoration: none;
+      color: inherit;
+      transition: box-shadow 0.2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .category-card:hover {
+      box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+      text-decoration: none;
+      color: inherit;
+    }
+    .category-image {
+      width: 100%;
+      height: 60px;
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      image-rendering: auto;
+      -ms-interpolation-mode: bicubic;
+    }
+    .category-image-placeholder {
+      background: #e9ecef;
+    }
+    .category-icon {
+      font-size: 1.5rem;
+      opacity: 0.6;
+    }
+    .category-content {
+      padding: 0.5rem;
+    }
+    .category-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin: 0 0 0.25rem 0;
+      color: #333;
+      line-height: 1.2;
+    }
+    .category-description {
+      font-size: 0.8rem;
+      color: #666;
+      margin: 0 0 0.5rem 0;
+      line-height: 1.3;
+      display: none; /* Masquer la description pour réduire la taille */
+    }
+    .category-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .category-count {
+      font-size: 0.8rem;
+      color: #007bff;
+      font-weight: 500;
+    }
+    .categories-more {
+      text-align: center;
+      margin-top: 2rem;
+    }
+    @media (max-width: 768px) {
+      .categories-grid {
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 1rem;
+      }
+    }
+  </style>
+{% endif %}

@@ -1,0 +1,84 @@
+server:
+  bind:
+    host: 0.0.0.0
+    port: 5001
+  cors: true
+  encoding: utf-8
+  language: en-US
+  limits:
+    default: 10000000
+    max: 10000
+  map:
+    url: /map
+    static: /static
+  mimetype: application/json; charset=UTF-8
+  pretty_print: true
+  url: http://localhost:5001
+  # Gestionnaire de traitements (OGC API - Processes = « WPS » léger).
+  manager:
+    name: Dummy
+
+logging:
+  level: INFO
+  log_config: null
+  logfile: null
+
+metadata:
+  accessconstraints: None
+  contact:
+    address: null
+    city: null
+    country: France
+    email: contact@dataizen.eu
+    fax: null
+    hours: null
+    instructions: null
+    name: Dataizen Team
+    phone: null
+    position: null
+    postalcode: null
+    stateorprovince: null
+    url: https://dataizen.eu
+  fees: None
+  identification:
+    description: OGC API for CKAN datasets
+    keywords:
+    - CKAN
+    - Dataizen
+    - OGC
+    - WFS
+    - WMS
+    - CSW
+    keywords_type: theme
+    name: Dataizen OGC API
+    terms_of_service: https://dataizen.eu/terms
+    title: Dataizen OGC API
+    url: https://dataizen.eu
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  provider:
+    address: null
+    city: null
+    contact: null
+    country: France
+    fax: null
+    hours: null
+    instructions: null
+    name: Dataizen
+    phone: null
+    postalcode: null
+    stateorprovince: null
+    url: https://dataizen.eu
+    website: https://dataizen.eu
+
+# Les collections sont ajoutées dynamiquement par la synchronisation ; les
+# entrées ci-dessous (process OGC API - Processes = « WPS » léger) sont préservées.
+resources:
+  hello-world:
+    type: process
+    processor:
+      name: HelloWorld
+
+
+

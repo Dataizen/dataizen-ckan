@@ -1,0 +1,67 @@
+{% extends "page.html" %}
+
+{% block subtitle %}{{ _('Edit SLD Style') }} - {{ resource.name or resource.id }}{% endblock %}
+
+{% block breadcrumb_content %}
+  <li>{% link_for _('Datasets'), named_route='dataset.search' %}</li>
+  <li class="active">{% link_for pkg_dict.title|truncate(30), named_route='dataset.read', id=pkg_dict.name %}</li>
+  <li class="active">{% link_for resource.name or _('Resource'), named_route='resource.read', id=pkg_dict.name, resource_id=resource.id %}</li>
+  <li class="active">{{ _('Edit SLD Style') }}</li>
+{% endblock %}
+
+{% block primary_content_inner %}
+  <h1 class="page-heading">{{ _('Edit SLD Style') }} – {{ resource.name or resource.id }}</h1>
+  <p class="text-muted">{{ _('This style will be applied to this resource\'s layer in WMS requests.') }}</p>
+  {% if layer_name %}
+  <div class="alert alert-info">
+    <strong>{{ _('Layer name for SLD') }}:</strong> <code>{{ layer_name }}</code>
+    <br><small>{{ _('The &lt;Name&gt; inside your SLD NamedLayer must match this (mapfile layer name).') }}</small>
+  </div>
+  {% endif %}
+  <form method="post" action="{{ h.url_for('ogc.save_sld_resource', org_id=pkg_dict.organization.name, dataset_id=pkg_dict.id, resource_id=resource.id) }}" id="sld-form">
+    <div class="form-group">
+      <label for="sld_xml"><strong>{{ _('SLD XML Content') }}</strong></label>
+      <textarea
+        class="form-control"
+        id="sld_xml"
+        name="sld_xml"
+        rows="20"
+        style="font-family: monospace; font-size: 12px;"
+        placeholder="{{ _('Paste your SLD XML here or use one of the templates below...') }}">{% if h.has_sld_style_for_resource(pkg_dict.id, resource.id) %}{{ h.get_sld_style_for_resource(pkg_dict.id, resource.id) }}{% endif %}</textarea>
+      <small class="form-text text-muted">
+        {{ _('Enter the complete SLD (Styled Layer Descriptor) XML. The NamedLayer/Name must be:') }} <code>{{ layer_name or 'res_...' }}</code>
+      </small>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">{{ _('Save SLD Style') }}</button>
+      <a href="{{ h.url_for('resource.read', id=pkg_dict.name, resource_id=resource.id) }}" class="btn btn-default">{{ _('Cancel') }}</a>
+      {% if h.has_sld_style_for_resource(pkg_dict.id, resource.id) %}
+        <a href="{{ h.url_for('ogc.get_sld_resource', org_id=pkg_dict.organization.name, dataset_id=pkg_dict.id, resource_id=resource.id) }}" class="btn btn-info">{{ _('View Current SLD') }}</a>
+      {% endif %}
+    </div>
+  </form>
+  <div class="alert alert-info" style="margin-top: 30px;">
+    <h4>{{ _('Example SLD Templates') }}</h4>
+    <p>{{ _('Click to copy into the textarea. The layer name will be set to:') }} <code>{{ layer_name or 'res_...' }}</code></p>
+    <div style="margin-top: 15px;">
+      <button onclick="copySLDTemplate('polygon')" class="btn btn-sm btn-primary">{{ _('Polygon') }}</button>
+      <button onclick="copySLDTemplate('point')" class="btn btn-sm btn-primary">{{ _('Point') }}</button>
+      <button onclick="copySLDTemplate('line')" class="btn btn-sm btn-primary">{{ _('Line') }}</button>
+    </div>
+  </div>
+  <script>
+    const layerName = {{ (layer_name or '')|tojson }};
+    const sldTemplates = {
+      polygon: '<?xml version="1.0" encoding="UTF-8"?>\n<StyledLayerDescriptor version="1.0.0" xmlns="http://www.opengis.net/sld" xmlns:ogc="http://www.opengis.net/ogc" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.opengis.net/sld http://schemas.opengis.net/sld/1.0.0/StyledLayerDescriptor.xsd">\n  <NamedLayer>\n    <Name>LAYER_NAME_PLACEHOLDER</Name>\n    <UserStyle>\n      <Name>default</Name>\n      <Title>Polygon Style</Title>\n      <FeatureTypeStyle>\n        <Rule>\n          <PolygonSymbolizer>\n            <Fill>\n              <CssParameter name="fill">#FF0000</CssParameter>\n              <CssParameter name="fill-opacity">0.5</CssParameter>\n            </Fill>\n            <Stroke>\n              <CssParameter name="stroke">#000000</CssParameter>\n              <CssParameter name="stroke-width">1</CssParameter>\n            </Stroke>\n          </PolygonSymbolizer>\n        </Rule>\n      </FeatureTypeStyle>\n    </UserStyle>\n  </NamedLayer>\n</StyledLayerDescriptor>',
+      point: '<?xml version="1.0" encoding="UTF-8"?>\n<StyledLayerDescriptor version="1.0.0" xmlns="http://www.opengis.net/sld" xmlns:ogc="http://www.opengis.net/ogc" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.opengis.net/sld http://schemas.opengis.net/sld/1.0.0/StyledLayerDescriptor.xsd">\n  <NamedLayer>\n    <Name>LAYER_NAME_PLACEHOLDER</Name>\n    <UserStyle>\n      <Name>default</Name>\n      <Title>Point Style</Title>\n      <FeatureTypeStyle>\n        <Rule>\n          <PointSymbolizer>\n            <Graphic>\n              <Mark>\n                <WellKnownName>circle</WellKnownName>\n                <Fill>\n                  <CssParameter name="fill">#0000FF</CssParameter>\n                </Fill>\n                <Stroke>\n                  <CssParameter name="stroke">#FFFFFF</CssParameter>\n                  <CssParameter name="stroke-width">1</CssParameter>\n                </Stroke>\n              </Mark>\n              <Size>6</Size>\n            </Graphic>\n          </PointSymbolizer>\n        </Rule>\n      </FeatureTypeStyle>\n    </UserStyle>\n  </NamedLayer>\n</StyledLayerDescriptor>',
+      line: '<?xml version="1.0" encoding="UTF-8"?>\n<StyledLayerDescriptor version="1.0.0" xmlns="http://www.opengis.net/sld" xmlns:ogc="http://www.opengis.net/ogc" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.opengis.net/sld http://schemas.opengis.net/sld/1.0.0/StyledLayerDescriptor.xsd">\n  <NamedLayer>\n    <Name>LAYER_NAME_PLACEHOLDER</Name>\n    <UserStyle>\n      <Name>default</Name>\n      <Title>Line Style</Title>\n      <FeatureTypeStyle>\n        <Rule>\n          <LineSymbolizer>\n            <Stroke>\n              <CssParameter name="stroke">#0000FF</CssParameter>\n              <CssParameter name="stroke-width">2</CssParameter>\n            </Stroke>\n          </LineSymbolizer>\n        </Rule>\n      </FeatureTypeStyle>\n    </UserStyle>\n  </NamedLayer>\n</StyledLayerDescriptor>'
+    };
+    function copySLDTemplate(type) {
+      const t = sldTemplates[type];
+      if (!t) return;
+      const text = t.replace(/LAYER_NAME_PLACEHOLDER/g, layerName || '');
+      const ta = document.getElementById('sld_xml');
+      if (ta) { ta.value = text; ta.focus(); }
+    }
+  </script>
+{% endblock %}

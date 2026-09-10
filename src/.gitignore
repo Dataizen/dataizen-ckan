@@ -1,0 +1,55 @@
+# Variables d'environnement
+.env
+.env.local
+.env.*.local
+
+# Sources externes ponctuelles
+src/*
+
+# Python
+*.pyc
+*.pyo
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environnements virtuels
+venv/
+.venv/
+env/
+
+# macOS / éditeurs
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.idea/
+.vscode/
+
+# Données et stockage (ignorés par git)
+ckan_storage/
+pg_data/
+solr_data/
+mapserver_storage/
+pygeoapi_storage/
+dumps/*
+!dumps/ckan.dump
+
+# Anciens emplacements MapServer (conservés pour compatibilité si migration nécessaire)
+mapserver/mapfiles/
+mapserver/logs/
+
+# Répertoire de référence pour l'analyse du CKAN de production (non utilisé dans ce projet)
+ckan_IDEO/
+
+# Fichiers pygeoapi générés (pas le fichier de base)
+**/pygeoapi/local.config.yml
+pygeoapi_storage/local.config.yml
+
+# Logs et artefacts d'import / debug
+*.log
+import-ckan-*.log
+import-activities-*/

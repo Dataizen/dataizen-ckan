@@ -1,0 +1,80 @@
+{% extends "page.html" %}
+
+{% block subtitle %}{{ _('Modèle DOLFIN') }}{% endblock %}
+
+{% block breadcrumb_content %}
+  <li>{% link_for _('Modèles DOLFIN'), named_route='dolfin.models_list' %}</li>
+  <li class="active"><a href="#">{{ model.titre if model else _('Nouveau modèle') }}</a></li>
+{% endblock %}
+
+{% block primary_content %}
+<section class="module">
+  <div class="module-content">
+    <h1 class="page-heading">{{ (_('Éditer : ') + model.titre) if (model and not model.builtin) else (_('Dupliquer : ') + model.titre) if model else _('Nouveau modèle DOLFIN') }}</h1>
+
+    <form method="post" action="{{ h.url_for('dolfin.model_save') }}" class="dataset-form">
+      {{ h.csrf_input() if h.csrf_input }}
+      <div class="form-group">
+        <label class="control-label">{{ _('Titre') }}</label>
+        <input name="titre" class="form-control" required value="{{ model.titre if model else '' }}" placeholder="{{ _('Points d\'intérêt (POI)') }}">
+      </div>
+      <div class="form-group">
+        <label class="control-label">{{ _('Type (Smart Data Model)') }}</label>
+        <input name="type" id="m_type" class="form-control" required value="{{ model.type if model else '' }}" placeholder="PointOfInterest">
+        <input type="hidden" name="slug" value="{{ model.slug if (model and not model.builtin) else '' }}">
+      </div>
+      <div class="form-group">
+        <label class="control-label">{{ _('Description') }}</label>
+        <input name="desc" class="form-control" value="{{ model.desc if model else '' }}">
+      </div>
+      <div class="form-group">
+        <label class="control-label">{{ _('Champs (séparés par des virgules)') }}</label>
+        <input name="champs" id="m_champs" class="form-control" value="{{ model.champs|join(', ') if model else '' }}" placeholder="name, category, address">
+      </div>
+      <div class="form-group">
+        <label class="checkbox"><input type="checkbox" name="geo" id="m_geo" {{ 'checked' if (model and model.geo) }}> {{ _('Géolocalisé (longitude / latitude)') }}</label>
+      </div>
+      <div class="form-group">
+        <label class="control-label">{{ _('Source .dolfin (optionnel, compilée/validée à l\'enregistrement)') }}</label>
+        <textarea name="dolfin" id="m_dolfin" class="form-control" rows="12" style="font-family:monospace;" placeholder="package <http://exemple/uc/poi>:&#10;  dolfin_version &quot;1&quot;&#10;&#10;concept PointOfInterest:&#10;  has name: one string&#10;  has category: optional string">{{ model.dolfin if model else '' }}</textarea>
+        <p class="text-muted" id="m_preview" style="margin-top:6px;"></p>
+      </div>
+      <button type="submit" class="btn btn-success"><i class="fa fa-check"></i> {{ _('Enregistrer + compiler') }}</button>
+      <a href="{{ h.url_for('dolfin.models_list') }}" class="btn btn-default">{{ _('Annuler') }}</a>
+    </form>
+  </div>
+</section>
+
+<script>
+(function() {
+  var ta = document.getElementById('m_dolfin');
+  var preview = document.getElementById('m_preview');
+  var champsInput = document.getElementById('m_champs');
+  var geoInput = document.getElementById('m_geo');
+  function parseDolfin() {
+    var src = ta.value || '';
+    var champs = [];
+    src.split('\n').forEach(function(line) {
+      var m = line.match(/^\s*has\s+([A-Za-z_][A-Za-z0-9_]*)\s*:/);
+      if (m && champs.indexOf(m[1]) < 0) champs.push(m[1]);
+    });
+    var geo = /\b(lat|lon|latitude|longitude|location|geo)\b/i.test(src);
+    if (champs.length) {
+      preview.innerHTML = '<strong>' + '{{ _("Champs détectés :") }}' + '</strong> ' + champs.join(', ') + (geo ? ' · ' + '{{ _("géolocalisé") }}' : '');
+    } else {
+      preview.textContent = '';
+    }
+    return { champs: champs, geo: geo };
+  }
+  if (ta) {
+    ta.addEventListener('input', parseDolfin);
+    ta.addEventListener('blur', function() {
+      var r = parseDolfin();
+      if (r.champs.length && !champsInput.value.trim()) champsInput.value = r.champs.join(', ');
+      if (r.geo) geoInput.checked = true;
+    });
+    parseDolfin();
+  }
+})();
+</script>
+{% endblock %}

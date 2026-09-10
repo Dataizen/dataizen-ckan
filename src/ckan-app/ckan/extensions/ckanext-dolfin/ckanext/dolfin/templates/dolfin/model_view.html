@@ -1,0 +1,35 @@
+{% extends "page.html" %}
+
+{% block subtitle %}{{ model.titre or model.type }}{% endblock %}
+
+{% block breadcrumb_content %}
+  <li class="active"><a href="#">{{ _('Modèle DOLFIN') }} : {{ model.titre or model.type }}</a></li>
+{% endblock %}
+
+{% block primary_content %}
+<section class="module">
+  <div class="module-content">
+    <h1 class="page-heading">
+      <i class="fa fa-cubes"></i> {{ model.titre or model.type }}
+      {% if model.builtin %}<span class="label label-default">{{ _('intégré') }}</span>{% else %}<span class="label label-info">{{ _('personnalisé') }}</span>{% endif %}
+    </h1>
+    <p class="text-muted">
+      {{ _('Modèle pivot des Smart Data Models, cible de l\'harmonisation sémantique DOLFIN.') }}
+      {{ _('Type') }} : <code>{{ model.type }}</code>{% if model.geo %} · {{ _('géolocalisé (location)') }}{% endif %}
+    </p>
+    {% if model.desc %}<p>{{ model.desc }}</p>{% endif %}
+    <h3>{{ _('Concepts du modèle') }}</h3>
+    {% if model.champs %}
+      <ul>
+        {% for c in model.champs %}<li><code>{{ c }}</code></li>{% endfor %}
+        {% if model.geo %}<li><code>location</code> <span class="text-muted">({{ _('longitude, latitude') }})</span></li>{% endif %}
+      </ul>
+    {% else %}
+      <p class="text-muted">{{ _('Aucun concept déclaré.') }}</p>
+    {% endif %}
+    <p class="text-muted">
+      {{ _('Un jeu de données est « harmonisé » vers ce modèle en associant chacun de ses concepts à une colonne du jeu (voir le panneau « Schéma DOLFIN » sur la fiche du jeu).') }}
+    </p>
+  </div>
+</section>
+{% endblock %}

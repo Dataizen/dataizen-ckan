@@ -1,0 +1,33 @@
+[
+    {
+        "title": "OSM",
+        "type" : "custom",
+        "url" : "http://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "attribution" : " Map tiles & Data by OpenStreetMap, under CC BY SA."
+    },
+    {
+        "title": "Stamen Watercolor",
+        "type" : "custom",
+        "url" : "https://stamen-tiles.a.ssl.fastly.net/watercolor/{z}/{x}/{y}.jpg",
+        "attribution" : "Map tiles by <a href='http://stamen.com'>Stamen Design</a>, under <a href='http://creativecommons.org/licenses/by/3.0'>CC BY 3.0</a>. Data by <a href='http://openstreetmap.org'>OpenStreetMap</a>, under <a href='http://creativecommons.org/licenses/by-sa/3.0'>CC BY SA</a>."
+    },
+    {
+        "title": "Stamen Terrain",
+        "type" : "custom",
+        "url" : "https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.jpg",
+        "attribution" : "Map tiles by <a href='http://stamen.com'>Stamen Design</a>, under <a href='http://creativecommons.org/licenses/by/3.0'>CC BY 3.0</a>. Data by <a href='http://openstreetmap.org'>OpenStreetMap</a>, under <a href='http://creativecommons.org/licenses/by-sa/3.0'>CC BY SA</a>."
+    },
+    {
+        "title": "Stamen Toner",
+        "type" : "custom",
+        "url" : "https://stamen-tiles.a.ssl.fastly.net/toner/{z}/{x}/{y}.png",
+        "attribution" : "Map tiles by <a href='http://stamen.com'>Stamen Design</a>, under <a href='http://creativecommons.org/licenses/by/3.0'>CC BY 3.0</a>. Data by <a href='http://openstreetmap.org'>OpenStreetMap</a>, under <a href='http://creativecommons.org/licenses/by-sa/3.0'>CC BY SA</a>."
+    },
+    {
+        "title": "OSM-FR",
+        "type" : "custom",
+        "url" : "http://a.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png",
+        "attribution" : "donn&eacute;es &copy; <a href='//osm.org/copyright'>OpenStreetMap</a>/ODbL - rendu <a href='//openstreetmap.fr'>OSM France</a>" 
+    }
+]
+

@@ -1,0 +1,56 @@
+{% ckan_extends %}
+
+{% block login_button %}
+  <div class="login-buttons">
+    <!-- Bouton SSO Keycloak -->
+    <a href="/user/sso" class="btn btn-primary sso-login-btn">
+      <i class="fa fa-key"></i> SSO Login
+    </a>
+    
+    <!-- Bouton de connexion CKAN classique -->
+    <button class="btn btn-default" type="submit" name="login">
+      <i class="fa fa-user"></i> {{ _('Log in') }}
+    </button>
+  </div>
+{% endblock %}
+
+{% block styles %}
+  {{ super() }}
+  <style>
+    .login-buttons {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    
+    .sso-login-btn {
+      background-color: #007bff;
+      border-color: #007bff;
+      color: white;
+      text-decoration: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      display: inline-block;
+    }
+    
+    .sso-login-btn:hover {
+      background-color: #0056b3;
+      border-color: #0056b3;
+      color: white;
+      text-decoration: none;
+    }
+    
+    @media (max-width: 768px) {
+      .login-buttons {
+        flex-direction: column;
+      }
+      
+      .login-buttons .btn,
+      .login-buttons a {
+        width: 100%;
+        margin-bottom: 5px;
+        text-align: center;
+      }
+    }
+  </style>
+{% endblock %}

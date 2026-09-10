@@ -1,0 +1,100 @@
+openapi: 3.0.0
+info:
+  title: Dataizen OGC API
+  description: OGC API for CKAN datasets
+  version: 1.0.0
+  contact:
+    name: Dataizen Team
+    email: contact@dataizen.eu
+    url: https://dataizen.eu
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: http://localhost:5001
+    description: Development server
+  - url: https://geo.core.dataizen.eu
+    description: Production server
+paths:
+  /:
+    get:
+      summary: Landing page
+      operationId: getLandingPage
+      responses:
+        "200":
+          description: Landing page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandingPage"
+  /api:
+    get:
+      summary: API information
+      operationId: getApi
+      responses:
+        "200":
+          description: API information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/API"
+  /collections:
+    get:
+      summary: Collections
+      operationId: getCollections
+      responses:
+        "200":
+          description: Collections
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Collections"
+components:
+  schemas:
+    LandingPage:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        links:
+          type: array
+          items:
+            $ref: "#/components/schemas/Link"
+    API:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        version:
+          type: string
+    Collections:
+      type: object
+      properties:
+        collections:
+          type: array
+          items:
+            $ref: "#/components/schemas/Collection"
+    Collection:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+    Link:
+      type: object
+      properties:
+        href:
+          type: string
+        rel:
+          type: string
+        type:
+          type: string
+        title:
+          type: string

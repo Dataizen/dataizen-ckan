@@ -1,0 +1,246 @@
+services:
+  ckan:
+    container_name: ckan
+    platform: linux/amd64
+    image: registry.core.dataizen.eu/dataizen-ckan:${TAG:-latest}
+    build:
+      context: ckan-app/ckan/
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+      args:
+        - TZ=${TZ}
+    env_file:
+      - .env
+    environment:
+      - CKAN_SITE_URL=${CKAN_SITE_URL:-http://localhost:8080}
+      - MAPSERVER_PUBLIC_URL=${MAPSERVER_PUBLIC_URL:-http://localhost:8081}
+      - MPLCONFIGDIR=/tmp/matplotlib-cache
+      - FONTCONFIG_CACHE=/tmp/fontconfig-cache
+      - PYGEOAPI_URL=http://pygeoapi:5001
+      - PYGEOAPI_AUTOSTART=0
+    links:
+      - db
+      - solr
+      - redis
+      - datapusher
+    ports:
+      - "0.0.0.0:${CKAN_PORT}:5000"
+    volumes:
+      - ./ckan_storage:/var/lib/ckan
+      # Partager la config pygeoapi avec le service pygeoapi (en écriture pour la synchronisation)
+      - ./pygeoapi_storage:/srv/app/pygeoapi
+      # Monter le fichier de base en lecture seule (depuis le code source)
+      - ./ckan-app/ckan/extensions/ckanext-ogc/pygeoapi/local.config.base.yml:/srv/app/pygeoapi/local.config.base.yml:ro
+      # Permettre docker compose depuis le container (pour redémarrer pygeoapi)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Partager le répertoire mapfiles pour permettre la génération depuis CKAN
+      - ./mapserver_storage/mapfiles:/mapserver/mapfiles
+
+  pygeoapi:
+    container_name: pygeoapi
+    platform: linux/amd64
+    image: registry.core.dataizen.eu/dataizen-ckan:${TAG:-latest}
+    env_file:
+      - .env
+    environment:
+      - CKAN_SITE_URL=${CKAN_SITE_URL:-http://localhost:8080}
+      - CKAN_URL=http://ckan:5000
+      - CKAN_API_KEY=${CKAN_API_KEY:-}
+      - MPLCONFIGDIR=/tmp/matplotlib-cache
+      - FONTCONFIG_CACHE=/tmp/fontconfig-cache
+      - PYGEOAPI_CONFIG=/srv/app/pygeoapi/local.config.yml
+      - PYGEOAPI_OPENAPI=/srv/app/pygeoapi/openapi.yml
+      - PYGEOAPI_PUBLIC_URL=${PYGEOAPI_PUBLIC_URL:-}
+      - PYGEOAPI_URL=${PYGEOAPI_URL:-http://pygeoapi:5001}
+    depends_on:
+      db:
+        condition: service_started
+      ckan:
+        condition: service_started
+    ports:
+      - "0.0.0.0:5001:5001"
+    volumes:
+      # Partager la config pygeoapi depuis CKAN
+      - ./pygeoapi_storage:/srv/app/pygeoapi
+      # Monter le fichier de base en lecture seule (depuis le code source)
+      - ./ckan-app/ckan/extensions/ckanext-ogc/pygeoapi/local.config.base.yml:/srv/app/pygeoapi/local.config.base.yml:ro
+    command:
+      - bash
+      - -c
+      - |
+        export MPLCONFIGDIR=/tmp/matplotlib-cache
+        export FONTCONFIG_CACHE=/tmp/fontconfig-cache
+        # Copier les providers depuis le volume monté vers site-packages pour écraser l'installation pip
+        if [ -d /srv/app/pygeoapi-providers ]; then
+          echo "Copie des providers depuis /srv/app/pygeoapi-providers vers site-packages..."
+          # Utiliser PYTHONPATH au lieu de copier dans site-packages si les permissions ne le permettent pas
+          if [ -w /usr/local/lib/python3.10/site-packages/ckan_provider/ ] 2>/dev/null; then
+            cp -r /srv/app/pygeoapi-providers/ckan_provider/* /usr/local/lib/python3.10/site-packages/ckan_provider/ 2>&1 && echo "Providers copiés" || echo " Échec copie providers, utilisation de PYTHONPATH"
+          else
+            echo " Permissions insuffisantes pour copier dans site-packages, utilisation de PYTHONPATH"
+            export PYTHONPATH="/srv/app/pygeoapi-providers:$PYTHONPATH"
+          fi
+        fi
+        cd /srv/app/pygeoapi
+        # Copier openapi.yml depuis le code source si absent dans le volume persistant
+        if [ ! -f openapi.yml ]; then
+          echo " openapi.yml manquant dans le volume persistant, copie depuis le code source..."
+          # Chercher openapi.yml dans le code source (monté ou dans l'image)
+          if [ -f /srv/app/ckanext-ogc/ckanext/ogc/pygeoapi/openapi.yml ]; then
+            cp /srv/app/ckanext-ogc/ckanext/ogc/pygeoapi/openapi.yml openapi.yml
+            echo "openapi.yml copié depuis le code source"
+          elif [ -f /srv/app/ckanext-ogc/pygeoapi/openapi.yml ]; then
+            cp /srv/app/ckanext-ogc/pygeoapi/openapi.yml openapi.yml
+            echo "openapi.yml copié depuis le code source"
+          else
+            echo " openapi.yml non trouvé dans le code source, génération ultérieure..."
+          fi
+        fi
+        # Vérifier que local.config.yml existe (sinon la synchronisation le créera)
+        if [ ! -f local.config.yml ]; then
+          echo " local.config.yml manquant, il sera créé par la synchronisation"
+          echo "Attente de la synchronisation CKAN pour créer local.config.yml..."
+          # Attendre que le fichier soit créé (max 60 secondes)
+          for i in {1..60}; do
+            if [ -f local.config.yml ]; then
+              echo "local.config.yml créé par la synchronisation"
+              break
+            fi
+            sleep 1
+          done
+          # Si toujours absent après l'attente, générer depuis le fichier de base
+          if [ ! -f local.config.yml ]; then
+            echo " local.config.yml toujours absent, génération depuis local.config.base.yml..."
+            if [ -f local.config.base.yml ]; then
+              cp local.config.base.yml local.config.yml
+              echo "local.config.yml créé depuis local.config.base.yml (sans collections pour l'instant)"
+            else
+              echo "local.config.base.yml non trouvé, pygeoapi ne peut pas démarrer"
+              exit 1
+            fi
+          fi
+        fi
+        # Générer openapi.yml si absent et que local.config.yml existe maintenant
+        if [ ! -f openapi.yml ] && [ -f local.config.yml ]; then
+          echo " openapi.yml manquant, génération depuis local.config.yml..."
+          pygeoapi openapi generate local.config.yml > openapi.yml 2>&1 || echo " Échec génération openapi.yml"
+          if [ -f openapi.yml ]; then
+            echo "openapi.yml généré"
+          fi
+        fi
+        # Mettre à jour server.url dans local.config.yml avec l'URL publique
+        /srv/app/scripts/update-pygeoapi-config.sh || echo " Échec mise à jour configuration pygeoapi"
+        # Démarrer pygeoapi
+        cd /srv/app/pygeoapi
+        PYGEOAPI_CONFIG=local.config.yml PYGEOAPI_OPENAPI=/srv/app/pygeoapi/openapi.yml pygeoapi serve --flask
+
+  datapusher:
+    container_name: datapusher-plus
+    image: bpmconseil/datapusher-plus-data4citizen-arnia:latest
+    depends_on:
+      - db
+    ports:
+      - "8800:8800"
+    env_file:
+      - .env
+
+  # datapusher:
+  #   container_name: datapusher
+  #   build:
+  #     context: ckan-app/datapusher/
+  #     args:
+  #       - SECRET_KEY=${SECRET_KEY}
+  #   environment:
+  #     DATAPUSHER_MAX_CONTENT_LENGTH: ${DATAPUSHER_MAX_CONTENT_LENGTH}
+  #     DATAPUSHER_CHUNK_SIZE: ${DATAPUSHER_CHUNK_SIZE}
+  #     DATAPUSHER_CHUNK_INSERT_ROWS: ${DATAPUSHER_CHUNK_INSERT_ROWS}
+  #   ports:
+  #     - "8800:8800"
+
+  db:
+    container_name: db
+    platform: linux/amd64
+    build:
+      context: ckan-app/postgresql/
+      platforms:
+        - linux/amd64
+      args:
+        - DATASTORE_READONLY_PASSWORD=${DATASTORE_READONLY_PASSWORD}
+        - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    environment:
+      DATASTORE_READONLY_PASSWORD: ${DATASTORE_READONLY_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/db
+    # Not working for now for datapusher-plus
+    # healthcheck:
+    #   test: ["CMD-SHELL", "pg_isready", "-d", "ckan"]
+    #   interval: 30s
+    #   timeout: 60s
+    #   retries: 5
+    #   start_period: 80s  
+    volumes:
+      - ./pg_data:/var/lib/postgresql/data
+    # Port 5432 non expose sur l hote pour eviter le conflit avec un PostgreSQL
+    # installe localement. CKAN/datapusher accedent a db via le reseau Docker.
+    # Pour debug depuis l hote, ajouter ici "5433:5432" et utiliser localhost:5433.
+    expose:
+      - "5432"
+
+  solr:
+    container_name: solr
+    image: ckan/ckan-solr:2.9-solr8
+    volumes:
+      - ./solr_data:/opt/solr/server/solr/ckan/data/index
+
+  redis:
+    container_name: redis
+    image: redis:alpine
+
+  mapserver:
+    container_name: mapserver
+    platform: linux/amd64
+    image: registry.core.dataizen.eu/dataizen-mapserver:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: mapserver/Dockerfile
+      platforms:
+        - linux/amd64
+    env_file:
+      - .env
+    environment:
+      - CKAN_URL=http://ckan:5000
+      - CKAN_API_KEY=${CKAN_API_KEY:-}
+      - POSTGIS_HOST=db
+      - POSTGIS_PORT=5432
+      - POSTGIS_DB=datastore
+      - POSTGIS_USER=ckan
+      - POSTGIS_PASSWORD=${POSTGRES_PASSWORD:-}
+      - MAPFILES_DIR=/mapserver/mapfiles
+    depends_on:
+      - db
+      - ckan
+    ports:
+      - "0.0.0.0:8081:80"
+    volumes:
+      - ./mapserver_storage/mapfiles:/mapserver/mapfiles
+      - ./mapserver_storage/logs:/mapserver/logs
+      - ./mapserver/data:/mapserver/data
+      - ./ckan_storage:/ckan_storage:ro
+      # Aussi monter le storage sur /var/lib/ckan pour que les paths
+      # absolus inscrits par generate-mapfile.py (cote CKAN) soient
+      # resolvables par MapServer (CONNECTIONTYPE OGR avec un path
+      # /var/lib/ckan/resources/<id3>/<id3>/<rest>).
+      - ./ckan_storage:/var/lib/ckan:ro
+      # Partager le script de génération depuis CKAN
+      - ./ckan-app/ckan/extensions/ckanext-ogc/scripts:/usr/local/bin/scripts:ro
+
+volumes:
+  ckan_storage:
+  pg_data:
+  solr_data:
+
+networks:
+  default:
+    name: ckan-local-network
+    driver: bridge

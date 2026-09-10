@@ -1,0 +1,154 @@
+{% extends "admin/base.html" %}
+
+{% block primary_content_inner %}
+  <h1>{{ _('Requêtes CKAN') }}</h1>
+  <p class="text-muted">{{ _('Dernières requêtes reçues par CKAN : chemin, méthode, statut, IP, User-Agent, URL de référence. Permet d’identifier ce qui sollicite l’instance (API, UI, IP, etc.).') }}</p>
+  
+  <div class="panel panel-default" style="margin-top: 16px;">
+    <div class="panel-heading clearfix">
+      <span class="panel-title">{{ _('Log des requêtes') }}</span>
+      <div class="pull-right">
+        <label class="checkbox-inline">
+          <input type="checkbox" id="auto-refresh" /> {{ _('Rafraîchir auto (10 s)') }}
+        </label>
+        <button id="refresh-btn" class="btn btn-sm btn-primary" style="margin-left: 8px;">
+          <i class="fa fa-refresh"></i> {{ _('Rafraîchir') }}
+        </button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <div id="request-log-loading" class="text-muted">
+        <i class="fa fa-spinner fa-spin"></i> {{ _('Chargement...') }}
+      </div>
+      <div id="request-log-error" class="alert alert-danger" style="display: none;"></div>
+      <div id="request-log-empty" class="text-muted" style="display: none;">
+        {{ _('Aucune requête enregistrée (Redis non disponible ou aucune requête encore).') }}
+      </div>
+      <div id="request-log-table-wrap" style="display: none; overflow-x: auto;">
+        <table class="table table-condensed table-striped table-bordered">
+          <thead>
+            <tr>
+              <th>{{ _('Heure') }}</th>
+              <th>{{ _('Méthode') }}</th>
+              <th>{{ _('Chemin / action') }}</th>
+              <th>{{ _('Statut') }}</th>
+              <th>{{ _('Durée (s)') }}</th>
+              <th>{{ _('IP') }}</th>
+              <th>{{ _('Accès') }}</th>
+              <th>{{ _('Referer') }}</th>
+              <th>{{ _('User-Agent') }}</th>
+            </tr>
+          </thead>
+          <tbody id="request-log-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      function init() {
+        if (typeof jQuery === 'undefined') {
+          setTimeout(init, 100);
+          return;
+        }
+        var $ = jQuery;
+        var refreshInterval = null;
+
+        function formatTime(ts) {
+          if (ts == null) return '-';
+          var d = new Date(ts * 1000);
+          return d.toLocaleString();
+        }
+
+        function escapeHtml(s) {
+          if (s == null || s === '') return '';
+          var div = document.createElement('div');
+          div.textContent = s;
+          return div.innerHTML;
+        }
+
+        function renderRow(e) {
+          var path = escapeHtml(e.path || '-');
+          var url = (e.url || '').substring(0, 120);
+          if ((e.url || '').length > 120) url += '…';
+          url = escapeHtml(url);
+          var referer = (e.referer || '').substring(0, 80);
+          if ((e.referer || '').length > 80) referer += '…';
+          referer = escapeHtml(referer);
+          var ua = (e.user_agent || '').substring(0, 60);
+          if ((e.user_agent || '').length > 60) ua += '…';
+          ua = escapeHtml(ua);
+          var status = e.status == null ? '-' : e.status;
+          var statusClass = status >= 500 ? 'danger' : (status >= 400 ? 'warning' : (status >= 300 ? 'info' : 'success'));
+          var accessBadge = (e.access_type || '') === 'API' ? '<span class="label label-primary">API</span>' : '<span class="label label-default">UI</span>';
+          return '<tr>' +
+            '<td title="' + url + '">' + formatTime(e.ts) + '</td>' +
+            '<td><code>' + escapeHtml(e.method || '') + '</code></td>' +
+            '<td><code>' + path + '</code></td>' +
+            '<td><span class="label label-' + statusClass + '">' + status + '</span></td>' +
+            '<td>' + (e.duration != null ? e.duration.toFixed(3) : '-') + '</td>' +
+            '<td><code>' + escapeHtml(e.ip || '') + '</code></td>' +
+            '<td>' + accessBadge + '</td>' +
+            '<td title="' + escapeHtml(e.referer || '') + '"><small>' + referer + '</small></td>' +
+            '<td title="' + escapeHtml(e.user_agent || '') + '"><small>' + ua + '</small></td>' +
+            '</tr>';
+        }
+
+        function loadLog() {
+          $('#request-log-loading').show();
+          $('#request-log-error').hide();
+          $('#request-log-empty').hide();
+          $('#request-log-table-wrap').hide();
+          $.ajax({
+            url: '/api/action/admin_get_request_log',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ limit: 200 }),
+            success: function(resp) {
+              $('#request-log-loading').hide();
+              var data = resp.result || resp;
+              if (!data || !data.success) {
+                $('#request-log-error').text(data && data.error ? data.error : '{{ _("Erreur inconnue") }}').show();
+                return;
+              }
+              var entries = data.entries || [];
+              if (entries.length === 0) {
+                $('#request-log-empty').show();
+                return;
+              }
+              var html = entries.map(renderRow).join('');
+              $('#request-log-tbody').html(html);
+              $('#request-log-table-wrap').show();
+            },
+            error: function(xhr) {
+              $('#request-log-loading').hide();
+              var msg = (xhr.responseJSON && (xhr.responseJSON.error || xhr.responseJSON.message)) || xhr.statusText || '{{ _("Erreur réseau") }}';
+              $('#request-log-error').text(msg).show();
+            }
+          });
+        }
+
+        $('#refresh-btn').on('click', loadLog);
+        $('#auto-refresh').on('change', function() {
+          if (this.checked) {
+            loadLog();
+            refreshInterval = setInterval(loadLog, 10000);
+          } else {
+            if (refreshInterval) {
+              clearInterval(refreshInterval);
+              refreshInterval = null;
+            }
+          }
+        });
+
+        loadLog();
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+    })();
+  </script>
+{% endblock %}

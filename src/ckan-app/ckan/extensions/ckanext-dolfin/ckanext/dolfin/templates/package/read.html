@@ -1,0 +1,81 @@
+{% ckan_extends %}
+
+{% block primary_content_inner %}
+  {{ super() }}
+  {# Schéma DOLFIN : affichage PUBLIC dès que le jeu porte un mapping (documentation
+     de l'harmonisation : modèle pivot Smart Data Models + correspondance colonnes). #}
+  {% set schema = h.dolfin_schema(pkg) %}
+  {% if schema %}
+    <div class="module module-dolfin-schema panel panel-default" style="margin-top: 16px;">
+      <div class="panel-heading">
+        <h3 class="panel-title"><i class="fa fa-cubes"></i> {{ _('Schéma DOLFIN (harmonisation sémantique)') }}</h3>
+      </div>
+      <div class="panel-body">
+        <p>
+          {{ _('Ce jeu est harmonisé vers le modèle pivot') }}
+          <strong>{{ schema.titre or schema.type }}</strong>{% if schema.titre and schema.type %} (<code>{{ schema.type }}</code>){% endif %}
+          {{ _('des Smart Data Models.') }}
+          {% if schema.type %}<a href="{{ h.url_for('dolfin.model_view', type_=schema.type) }}">{{ _('Voir le modèle') }} →</a>{% endif %}
+        </p>
+        {% if schema.desc %}<p class="text-muted">{{ schema.desc }}</p>{% endif %}
+        {% if schema.rows or schema.geo %}
+          <table class="table table-striped table-bordered" style="margin-bottom: 8px;">
+            <thead><tr><th>{{ _('Concept DOLFIN') }}</th><th>{{ _('Colonne source') }}</th></tr></thead>
+            <tbody>
+              {% for concept, colonne in schema.rows %}
+                <tr><td><code>{{ concept }}</code></td><td>{{ colonne }}</td></tr>
+              {% endfor %}
+              {% if schema.geo %}
+                <tr><td><code>location</code></td><td>{{ schema.geo.lon }}, {{ schema.geo.lat }} <span class="text-muted">({{ _('longitude, latitude') }})</span></td></tr>
+              {% endif %}
+            </tbody>
+          </table>
+        {% endif %}
+        {% if schema.id_field %}<p class="text-muted">{{ _('Identifiant :') }} <code>{{ schema.id_field }}</code></p>{% endif %}
+        {% if schema.context %}<p class="text-muted">{{ _('Contexte :') }} <a href="{{ schema.context }}" rel="nofollow noopener" target="_blank">{{ schema.context }}</a></p>{% endif %}
+      </div>
+    </div>
+  {% endif %}
+  {% if h.check_access('package_update', {'id': pkg.id}) %}
+    {% set st = h.dolfin_stale(pkg) %}
+    {% if st %}
+      <div class="alert alert-warning" style="margin-top: 16px;">
+        <i class="fa fa-exclamation-triangle"></i>
+        {{ _('Le modèle DOLFIN') }} <strong>{{ st.type or '' }}</strong>
+        {{ _('a été mis à jour') }}{% if st.changed_by %} {{ _('par') }} {{ st.changed_by }}{% endif %}.
+        {{ _('Les fichiers harmonisés de ce jeu peuvent être régénérés.') }}
+        <form method="post" action="{{ h.url_for('dolfin.regenerate', id=pkg.name) }}" style="display:inline; margin-left:8px;">
+          {{ h.csrf_input() if h.csrf_input }}
+          <button type="submit" class="btn btn-warning btn-sm">
+            <i class="fa fa-refresh"></i> {{ _('Régénérer les fichiers harmonisés') }}
+          </button>
+        </form>
+      </div>
+    {% endif %}
+    <div class="module module-dolfin panel panel-default" style="margin-top: 16px;">
+      <div class="panel-heading">
+        <h3 class="panel-title"><i class="fa fa-cubes"></i> {{ _('Harmonisation sémantique (DOLFIN)') }}</h3>
+      </div>
+      <div class="panel-body">
+        <p class="text-muted">{{ _('Associer les champs d\'un modèle pivot (Smart Data Models) aux colonnes du jeu et générer les sorties NGSI-LD / CSV / GeoJSON.') }}</p>
+        <a href="{{ h.url_for('dolfin.page', id=pkg.name) }}" class="btn btn-primary btn-dataset-dolfin">
+          <i class="fa fa-cubes"></i> {{ _('Harmoniser (DOLFIN)') }}
+        </a>
+      </div>
+    </div>
+    <div class="module module-metadata-ai panel panel-default" style="margin-top: 16px;">
+      <div class="panel-heading">
+        <h3 class="panel-title"><i class="fa fa-magic"></i> {{ _('Métadonnées assistées par IA') }}</h3>
+      </div>
+      <div class="panel-body">
+        <p class="text-muted">{{ _('Proposer et compléter les métadonnées vides (titre, description, mots-clés, thématique…) à partir du contenu du jeu. Vous vérifiez ensuite.') }}</p>
+        <form method="post" action="{{ h.url_for('dolfin.metadata_ai', id=pkg.name) }}" style="display:inline;">
+          {{ h.csrf_input() if h.csrf_input }}
+          <button type="submit" class="btn btn-default">
+            <i class="fa fa-magic"></i> {{ _('Compléter les métadonnées (IA)') }}
+          </button>
+        </form>
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}

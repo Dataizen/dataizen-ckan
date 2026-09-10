@@ -1,0 +1,121 @@
+# Configuration Nginx pour reverse proxy vers MapServer, pygeoapi et CKAN
+# 
+# À placer dans /etc/nginx/sites-available/ et créer un lien symbolique
+# dans /etc/nginx/sites-enabled/
+#
+# Exemple d'utilisation:
+#   sudo cp nginx-reverse-proxy.conf.example /etc/nginx/sites-available/dataizen
+#   sudo ln -s /etc/nginx/sites-available/dataizen /etc/nginx/sites-enabled/
+#   sudo nginx -t
+#   sudo systemctl reload nginx
+
+upstream ckan {
+    server ckan:5000;
+}
+
+upstream pygeoapi {
+    server pygeoapi:5001;
+}
+
+upstream mapserver {
+    server mapserver:80;
+}
+
+server {
+    listen 80;
+    server_name dataizen.local localhost;
+
+    # Logs
+    access_log /var/log/nginx/dataizen-access.log;
+    error_log /var/log/nginx/dataizen-error.log;
+
+    # Taille maximale des uploads
+    client_max_body_size 100M;
+
+    # CKAN - Application principale
+    location / {
+        proxy_pass http://ckan;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Timeouts pour les opérations longues
+        proxy_connect_timeout 300;
+        proxy_send_timeout 300;
+        proxy_read_timeout 300;
+    }
+
+    # pygeoapi - OGC API modernes
+    location /api {
+        proxy_pass http://pygeoapi;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # CORS pour les APIs
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'Content-Type, Authorization' always;
+        
+        if ($request_method = 'OPTIONS') {
+            return 204;
+        }
+    }
+
+    # MapServer - WMS/WFS traditionnels
+    location /wms {
+        proxy_pass http://mapserver;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Timeouts pour les requêtes de cartes
+        proxy_connect_timeout 60;
+        proxy_send_timeout 60;
+        proxy_read_timeout 60;
+    }
+
+    location /wfs {
+        proxy_pass http://mapserver;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Timeouts pour les requêtes de features
+        proxy_connect_timeout 120;
+        proxy_send_timeout 120;
+        proxy_read_timeout 120;
+    }
+
+    location /wmts {
+        proxy_pass http://mapserver;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Mapfiles - Accès direct aux fichiers .map (optionnel, pour debug)
+    location /mapfiles {
+        alias /mapserver/mapfiles;
+        default_type text/plain;
+        
+        # Sécuriser l'accès (désactiver en production si nécessaire)
+        # allow 127.0.0.1;
+        # deny all;
+    }
+
+    # Health check endpoint
+    location /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+}
+
+
+

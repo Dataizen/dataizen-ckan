@@ -1,0 +1,11 @@
+include *.md
+include *.txt
+recursive-include ckanext *.py
+
+
+
+
+
+
+
+

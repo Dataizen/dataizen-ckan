@@ -1,0 +1,282 @@
+{% ckan_extends %}
+
+{% block resource_additional_information %}
+  {{ super() }}
+  
+  {# Vérifier si la ressource est géospatiale #}
+  {% set is_geospatial = false %}
+  {% set format_upper = resource.get('format', '')|upper %}
+  {% set url_lower = (resource.get('url', '') or '')|lower %}
+  
+  {# Détecter les formats géospatiaux, y compris ZIP contenant des shapefiles #}
+  {% if format_upper in ['SHP', 'SHAPEFILE', 'GEOJSON', 'KML', 'KMZ', 'GPX', 'GPKG', 'GEOPACKAGE', 'ZIP'] %}
+    {% set is_geospatial = true %}
+  {% elif url_lower.endswith('.zip') or url_lower.endswith('.shp') or url_lower.endswith('.geojson') or url_lower.endswith('.gpkg') or url_lower.endswith('.kml') or url_lower.endswith('.kmz') %}
+    {% set is_geospatial = true %}
+  {% elif resource.get('datastore_active') %}
+    {% set is_geospatial = true %}
+  {% endif %}
+  
+  {# Vérifier aussi si le dataset lui-même est géospatial (pour afficher les liens WMS/WFS) #}
+  {% set dataset_name = pkg.name if pkg else (package.name if package else None) %}
+  {% if dataset_name and h.is_geospatial_dataset(pkg if pkg else package) %}
+    {% set is_geospatial = true %}
+  {% endif %}
+  
+  {# Vérifier si un mapfile existe pour ce dataset (nécessaire pour WMS/WFS) #}
+  {% if dataset_name %}
+    {% set has_mapfile = h.has_mapfile(dataset_name) %}
+  {% else %}
+    {% set has_mapfile = false %}
+  {% endif %}
+  
+    {% if is_geospatial %}
+    {% set pkg_id = pkg.id if pkg else (package.id if package else None) %}
+    {% set dataset_name = pkg.name if pkg else (package.name if package else None) %}
+    {# Nom de couche WMS pour cette ressource (pour appliquer le SLD de la ressource dans les URLs) #}
+    {% set layer_name_resource = h.layer_name_for_resource(resource.id) if resource and resource.id else dataset_name %}
+    {% set wms_layer_param = layer_name_resource or dataset_name %}
+    {# Vérifier l'organisation : d'abord via pkg/package.organization, puis via owner_org #}
+    {% set org_name = None %}
+    {% if pkg and pkg.organization %}
+      {% set org_name = pkg.organization.name %}
+    {% elif package and package.organization %}
+      {% set org_name = package.organization.name %}
+    {% elif pkg and pkg.owner_org %}
+      {# Si organization n'est pas chargée, récupérer via owner_org #}
+      {% set org_obj = h.get_organization(pkg.owner_org) %}
+      {% if org_obj %}
+        {% set org_name = org_obj.name %}
+      {% endif %}
+    {% elif package and package.owner_org %}
+      {% set org_obj = h.get_organization(package.owner_org) %}
+      {% if org_obj %}
+        {% set org_name = org_obj.name %}
+      {% endif %}
+    {% endif %}
+    {% set ckan_site_url = h.get_ogc_base_url() %}
+    {% set wms_proxy_url = ckan_site_url + '/wms/' + org_name if org_name else '' %}
+    {% set wfs_proxy_url = ckan_site_url + '/maps/' + org_name if org_name else '' %}
+    {% set wfs_direct_proxy_url = ckan_site_url + '/wfs' %}
+    {% set mapserver_url = h.get_mapserver_url() %}
+    {% set pygeoapi_url = h.get_pygeoapi_url() %}
+    
+    <div class="module-content ogc-services-section" style="margin-top: 30px;">
+      <h2>Services géospatiaux OGC</h2>
+      
+      {% if not has_mapfile %}
+        <div class="alert alert-warning" style="margin-bottom: 20px;">
+          <strong>Mapfile non généré</strong> - Les services WMS/WFS nécessitent un mapfile MapServer.
+          {% if dataset_name %}
+            <br><small>Pour générer le mapfile : <code>docker compose exec ckan /srv/app/scripts/sync-mapfiles.sh {{ dataset_name }}</code></small>
+          {% endif %}
+        </div>
+      {% endif %}
+      
+      {% if org_name and dataset_name and has_mapfile %}
+        {# Une seule évaluation pour cohérence lien Modifier/Ajouter + bouton Supprimer + alerte SLD #}
+        {% set has_sld = (pkg_id and resource.id and h.has_sld_style_for_resource(pkg_id, resource.id)) or (dataset_name and resource.id and h.has_sld_style_for_resource(dataset_name, resource.id)) %}
+        {# Bloc WMS #}
+        <div class="ogc-service-block" style="margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 5px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <h3 style="margin-top: 0; color: #2c3e50;">WMS (Web Map Service)</h3>
+            {% if h.is_geospatial_dataset(pkg if pkg else package) and pkg_id and resource.id %}
+              <span style="display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <a href="{{ h.url_for('ogc.edit_sld_resource', org_id=org_name, dataset_id=pkg_id, resource_id=resource.id) }}" class="btn btn-sm btn-primary">
+                  {% if has_sld %}
+                    Modifier le style SLD (cette ressource)
+                  {% else %}
+                    Ajouter un style SLD (cette ressource)
+                  {% endif %}
+                </a>
+                {% if has_sld %}
+                  <form method="post" action="{{ h.url_for('ogc.delete_sld_resource', org_id=org_name, dataset_id=pkg_id, resource_id=resource.id) }}" style="display: inline;" onsubmit="return confirm('{{ _('Remove the SLD style for this resource? The mapfile will be reset to the default style.') }}');">
+                    <button type="submit" class="btn btn-sm btn-danger" title="{{ _('Remove SLD style and reset mapfile to default') }}">Supprimer le style SLD</button>
+                  </form>
+                {% endif %}
+              </span>
+            {% endif %}
+          </div>
+          <p>Service de cartographie pour afficher des images géoréférencées. Le style SLD est défini par ressource.</p>
+          {% if has_sld %}
+            <div class="alert alert-success" style="margin-top: 10px;">
+              <strong>Style SLD actif pour cette ressource</strong>
+              <a href="{{ h.url_for('ogc.get_sld_resource', org_id=org_name, dataset_id=pkg_id, resource_id=resource.id) }}" target="_blank" style="margin-left: 10px;">Voir le SLD</a>
+            </div>
+          {% endif %}
+          
+          <div class="ogc-urls" style="margin-top: 15px;">
+            <div style="margin-bottom: 15px;">
+              <strong>URL de base pour QGIS/ArcGIS :</strong>
+              <div style="margin-top: 5px; padding: 10px; background: #f5f5f5; border-radius: 3px;">
+                <code style="word-break: break-all;">{{ mapserver_url }}/wms?map=/mapserver/mapfiles/{{ dataset_name }}.map</code>
+                <button onclick="copyToClipboard('{{ mapserver_url }}/wms?map=/mapserver/mapfiles/{{ dataset_name }}.map')" class="btn btn-sm btn-primary" style="margin-left: 10px;">Copier</button>
+              </div>
+              <small class="form-text text-muted" style="margin-top: 5px;">
+                Le style SLD est compilé dans le mapfile pour chaque ressource.
+              </small>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <strong>GetCapabilities (direct MapServer) :</strong>
+              <div style="margin-top: 5px; padding: 10px; background: #f5f5f5; border-radius: 3px;">
+                <code style="word-break: break-all;">{{ mapserver_url }}/wms?map=/mapserver/mapfiles/{{ dataset_name }}.map&SERVICE=WMS&VERSION=1.1.0&REQUEST=GetCapabilities</code>
+                <button onclick="copyToClipboard('{{ mapserver_url }}/wms?map=/mapserver/mapfiles/{{ dataset_name }}.map&SERVICE=WMS&VERSION=1.1.0&REQUEST=GetCapabilities')" class="btn btn-sm btn-primary" style="margin-left: 10px;">Copier</button>
+                <a href="{{ ckan_site_url }}/wms?map=/mapserver/mapfiles/{{ dataset_name }}.map&SERVICE=WMS&VERSION=1.1.0&REQUEST=GetCapabilities" target="_blank" class="btn btn-sm btn-success" style="margin-left: 10px;">Tester (affiche le XML)</a>
+              </div>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <strong>GetMap (direct MapServer) :</strong>
+              <div style="margin-top: 5px; padding: 10px; background: #f5f5f5; border-radius: 3px;">
+                <code style="word-break: break-all;">{{ mapserver_url }}/wms?map=/mapserver/mapfiles/{{ dataset_name }}.map&SERVICE=WMS&VERSION=1.1.0&REQUEST=GetMap&LAYERS={{ wms_layer_param }}&SRS=EPSG:3857&BBOX=-556597,5160979,1113194,6621293&WIDTH=800&HEIGHT=600&FORMAT=image/png</code>
+                <button onclick="copyToClipboard('{{ mapserver_url }}/wms?map=/mapserver/mapfiles/{{ dataset_name }}.map&SERVICE=WMS&VERSION=1.1.0&REQUEST=GetMap&LAYERS={{ wms_layer_param }}&SRS=EPSG:3857&BBOX=-556597,5160979,1113194,6621293&WIDTH=800&HEIGHT=600&FORMAT=image/png')" class="btn btn-sm btn-primary" style="margin-left: 10px;">Copier</button>
+                <a href="{{ ckan_site_url }}/wms?map=/mapserver/mapfiles/{{ dataset_name }}.map&SERVICE=WMS&VERSION=1.1.0&REQUEST=GetMap&LAYERS={{ wms_layer_param }}&SRS=EPSG:3857&BBOX=-556597,5160979,1113194,6621293&WIDTH=800&HEIGHT=600&FORMAT=image/png" target="_blank" class="btn btn-sm btn-success" style="margin-left: 10px;">Tester (affiche l’image)</a>
+              </div>
+              <small class="form-text text-muted" style="margin-top: 5px;">
+                Couche de cette ressource : {{ wms_layer_param }}. Le style est celui du mapfile (SLD compilé).
+              </small>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <strong>GetLegendGraphic (direct MapServer) :</strong>
+              <div style="margin-top: 5px; padding: 10px; background: #f5f5f5; border-radius: 3px;">
+                <code style="word-break: break-all;">{{ mapserver_url }}/wms?map=/mapserver/mapfiles/{{ dataset_name }}.map&SERVICE=WMS&VERSION=1.1.0&REQUEST=GetLegendGraphic&LAYER={{ wms_layer_param }}&FORMAT=image/png&STYLE=default</code>
+                <button onclick="copyToClipboard('{{ mapserver_url }}/wms?map=/mapserver/mapfiles/{{ dataset_name }}.map&SERVICE=WMS&VERSION=1.1.0&REQUEST=GetLegendGraphic&LAYER={{ wms_layer_param }}&FORMAT=image/png&STYLE=default')" class="btn btn-sm btn-primary" style="margin-left: 10px;">Copier</button>
+                <a href="{{ ckan_site_url }}/wms?map=/mapserver/mapfiles/{{ dataset_name }}.map&SERVICE=WMS&VERSION=1.1.0&REQUEST=GetLegendGraphic&LAYER={{ wms_layer_param }}&FORMAT=image/png&STYLE=default" target="_blank" class="btn btn-sm btn-success" style="margin-left: 10px;">Tester (affiche l’image)</a>
+              </div>
+              <small class="form-text text-muted" style="margin-top: 5px;">
+                Légende de la couche {{ wms_layer_param }} (style compilé dans le mapfile).
+              </small>
+            </div>
+          </div>
+        </div>
+        
+        {# Bloc WMTS #}
+        <div class="ogc-service-block" style="margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9;">
+          <h3 style="margin-top: 0; color: #2c3e50;">WMTS (Web Map Tile Service)</h3>
+          <p style="color: #e74c3c; font-weight: bold;">Non disponible : WMTS nécessite MapCache qui n'est pas configuré actuellement.</p>
+          <p style="color: #7f8c8d;">Pour utiliser WMTS, il faut installer et configurer MapCache. En attendant, utilisez WMS pour les services de cartographie.</p>
+        </div>
+        
+        {# Bloc WFS #}
+        <div class="ogc-service-block" style="margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 5px;">
+          <h3 style="margin-top: 0; color: #2c3e50;">WFS (Web Feature Service)</h3>
+          <p>Service pour récupérer les features (géométries + attributs) au format vectoriel.</p>
+          
+          <div class="ogc-urls" style="margin-top: 15px;">
+            <div style="margin-bottom: 15px;">
+              <strong>URL de base pour QGIS (via proxy CKAN) :</strong>
+              <div style="margin-top: 5px; padding: 10px; background: #f5f5f5; border-radius: 3px;">
+                <code style="word-break: break-all;">{{ wfs_direct_proxy_url }}?map=/mapserver/mapfiles/{{ dataset_name }}.map</code>
+                <button onclick="copyToClipboard('{{ wfs_direct_proxy_url }}?map=/mapserver/mapfiles/{{ dataset_name }}.map')" class="btn btn-sm btn-primary" style="margin-left: 10px;">Copier</button>
+              </div>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <strong>GetCapabilities (via proxy CKAN direct) :</strong>
+              <div style="margin-top: 5px; padding: 10px; background: #f5f5f5; border-radius: 3px;">
+                <code style="word-break: break-all;">{{ wfs_direct_proxy_url }}?map=/mapserver/mapfiles/{{ dataset_name }}.map&SERVICE=WFS&VERSION=2.0.0&REQUEST=GetCapabilities</code>
+                <button onclick="copyToClipboard('{{ wfs_direct_proxy_url }}?map=/mapserver/mapfiles/{{ dataset_name }}.map&SERVICE=WFS&VERSION=2.0.0&REQUEST=GetCapabilities')" class="btn btn-sm btn-primary" style="margin-left: 10px;">Copier</button>
+                <a href="{{ wfs_direct_proxy_url }}?map=/mapserver/mapfiles/{{ dataset_name }}.map&SERVICE=WFS&VERSION=2.0.0&REQUEST=GetCapabilities" target="_blank" class="btn btn-sm btn-success" style="margin-left: 10px;">Tester</a>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        {# Bloc OGC API Features #}
+        <div class="ogc-service-block" style="margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 5px;">
+          <h3 style="margin-top: 0; color: #2c3e50;">OGC API Features</h3>
+          <p>API REST moderne pour accéder aux features au format JSON (GeoJSON).</p>
+          
+          <div class="ogc-urls" style="margin-top: 15px;">
+            <div style="margin-bottom: 15px;">
+              <strong>Collection (liste des items) :</strong>
+              <div style="margin-top: 5px; padding: 10px; background: #f5f5f5; border-radius: 3px;">
+                <code style="word-break: break-all;">{{ pygeoapi_url }}/collections/{{ dataset_name }}/items</code>
+                <a href="{{ pygeoapi_url }}/collections/{{ dataset_name }}/items" target="_blank" class="btn btn-sm btn-success" style="margin-left: 10px;">Tester</a>
+              </div>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <strong>Collection avec limite :</strong>
+              <div style="margin-top: 5px; padding: 10px; background: #f5f5f5; border-radius: 3px;">
+                <code style="word-break: break-all;">{{ pygeoapi_url }}/collections/{{ dataset_name }}/items?limit=10</code>
+                <a href="{{ pygeoapi_url }}/collections/{{ dataset_name }}/items?limit=10" target="_blank" class="btn btn-sm btn-success" style="margin-left: 10px;">Tester</a>
+              </div>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <strong>Collection avec bbox :</strong>
+              <div style="margin-top: 5px; padding: 10px; background: #f5f5f5; border-radius: 3px;">
+                <code style="word-break: break-all;">{{ pygeoapi_url }}/collections/{{ dataset_name }}/items?bbox=-5,42,10,51</code>
+                <a href="{{ pygeoapi_url }}/collections/{{ dataset_name }}/items?bbox=-5,42,10,51" target="_blank" class="btn btn-sm btn-success" style="margin-left: 10px;">Tester</a>
+              </div>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <strong>Collection (description) :</strong>
+              <div style="margin-top: 5px; padding: 10px; background: #f5f5f5; border-radius: 3px;">
+                <code style="word-break: break-all;">{{ pygeoapi_url }}/collections/{{ dataset_name }}</code>
+                <a href="{{ pygeoapi_url }}/collections/{{ dataset_name }}" target="_blank" class="btn btn-sm btn-success" style="margin-left: 10px;">Tester</a>
+              </div>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <strong>OpenAPI (spécification) :</strong>
+              <div style="margin-top: 5px; padding: 10px; background: #f5f5f5; border-radius: 3px;">
+                <code style="word-break: break-all;">{{ pygeoapi_url }}/openapi</code>
+                <a href="{{ pygeoapi_url }}/openapi" target="_blank" class="btn btn-sm btn-success" style="margin-left: 10px;">Tester</a>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+      {% else %}
+        <div class="alert alert-info">
+          <p>Les services OGC nécessitent que le dataset soit associé à une organisation.</p>
+        </div>
+      {% endif %}
+    </div>
+    
+    <script>
+      function copyToClipboard(text) {
+        navigator.clipboard.writeText(text).then(function() {
+          alert('URL copiée dans le presse-papiers !');
+        }, function(err) {
+          // Fallback pour les navigateurs plus anciens
+          var textArea = document.createElement("textarea");
+          textArea.value = text;
+          textArea.style.position = "fixed";
+          textArea.style.left = "-999999px";
+          textArea.style.top = "-999999px";
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          try {
+            document.execCommand('copy');
+            alert('URL copiée dans le presse-papiers !');
+          } catch (err) {
+            alert('Erreur lors de la copie. Veuillez copier manuellement.');
+          }
+          document.body.removeChild(textArea);
+        });
+      }
+    </script>
+    
+    <style>
+      .ogc-service-block h3 {
+        border-bottom: 2px solid #3498db;
+        padding-bottom: 10px;
+      }
+      .ogc-urls code {
+        font-size: 0.9em;
+        color: #2c3e50;
+      }
+      .ogc-urls .btn {
+        vertical-align: middle;
+      }
+    </style>
+    
+  {% endif %}
+{% endblock %}

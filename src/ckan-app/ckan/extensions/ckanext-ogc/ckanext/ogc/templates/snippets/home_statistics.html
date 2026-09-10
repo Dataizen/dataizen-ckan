@@ -1,0 +1,82 @@
+{% set stats = h.get_home_statistics() %}
+<section class="statistics-section">
+  <h2 class="section-title">{{ _('Statistiques du portail') }}</h2>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-number">{{ stats.datasets }}</div>
+      <div class="stat-label">{{ _('Datasets') }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">{{ stats.organizations }}</div>
+      <div class="stat-label">{{ _('Organisations') }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">{{ stats.resources }}</div>
+      <div class="stat-label">{{ _('Ressources') }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">{{ stats.groups }}</div>
+      <div class="stat-label">{{ _('Groupes') }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">{{ stats.tags }}</div>
+      <div class="stat-label">{{ _('Tags') }}</div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .statistics-section {
+    margin: 2rem 0;
+    padding: 1.5rem;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+  }
+  .statistics-section .section-title {
+    margin-bottom: 1.5rem;
+    font-size: 1.5rem;
+    color: #333;
+    text-align: center;
+  }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1rem;
+  }
+  .stat-card {
+    background: #fff;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    padding: 1rem;
+    text-align: center;
+    transition: box-shadow 0.2s;
+  }
+  .stat-card:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+  .stat-number {
+    font-size: 2rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: #495057;
+  }
+  .stat-label {
+    font-size: 0.85rem;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  @media (max-width: 768px) {
+    .stats-grid {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+    }
+    .stat-card {
+      padding: 0.75rem;
+    }
+    .stat-number {
+      font-size: 1.5rem;
+    }
+  }
+</style>

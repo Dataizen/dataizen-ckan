@@ -1,0 +1,72 @@
+{% ckan_extends %}
+
+{% block organization_info %}
+  {{ super() }}
+  
+  {# Ajouter les boutons WFS et WMS pour l'organisation #}
+  {% set org_name = c.group_dict.name if c.group_dict else (c.group.name if c.group else None) %}
+  {# Debug: vérifier si org_name est disponible #}
+  {% if org_name %}
+    {% set ckan_site_url = h.get_ogc_base_url() %}
+    {% set wfs_proxy_url = ckan_site_url + '/maps/' + org_name %}
+    {% set wms_proxy_url = ckan_site_url + '/wms/' + org_name %}
+    
+    <div class="module-content" style="margin-top: 20px; padding: 20px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9;">
+      <h3 style="margin-top: 0;">Services géospatiaux OGC</h3>
+      <p>Accédez à tous les datasets géospatiaux de cette organisation via les services WFS et WMS :</p>
+      
+      <div style="display: flex; gap: 15px; flex-wrap: wrap; margin-top: 15px;">
+        <div style="flex: 1; min-width: 250px;">
+          <strong>WFS (Web Feature Service)</strong>
+          <div style="margin-top: 8px; padding: 10px; background: #fff; border-radius: 3px; border: 1px solid #ddd;">
+            <code style="word-break: break-all; font-size: 11px;">{{ wfs_proxy_url }}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetCapabilities</code>
+            <button onclick="copyToClipboard('{{ wfs_proxy_url }}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetCapabilities')" class="btn btn-sm btn-primary" style="margin-left: 10px; margin-top: 5px;">Copier</button>
+          </div>
+          <small class="form-text text-muted" style="margin-top: 5px; display: block;">
+            Service pour récupérer les features (géométries + attributs) au format vectoriel.
+          </small>
+        </div>
+        
+        <div style="flex: 1; min-width: 250px;">
+          <strong>WMS (Web Map Service)</strong>
+          <div style="margin-top: 8px; padding: 10px; background: #fff; border-radius: 3px; border: 1px solid #ddd;">
+            <code style="word-break: break-all; font-size: 11px;">{{ wms_proxy_url }}?SERVICE=WMS&VERSION=1.1.0&REQUEST=GetCapabilities</code>
+            <button onclick="copyToClipboard('{{ wms_proxy_url }}?SERVICE=WMS&VERSION=1.1.0&REQUEST=GetCapabilities')" class="btn btn-sm btn-primary" style="margin-left: 10px; margin-top: 5px;">Copier</button>
+          </div>
+          <small class="form-text text-muted" style="margin-top: 5px; display: block;">
+            Service de cartographie avec styles SLD appliqués automatiquement si définis.
+          </small>
+        </div>
+      </div>
+    </div>
+    
+    <script>
+      function copyToClipboard(text) {
+        if (!navigator.clipboard) {
+          var textArea = document.createElement("textarea");
+          textArea.value = text;
+          textArea.style.position = "fixed";
+          textArea.style.left = "-999999px";
+          document.body.appendChild(textArea);
+          textArea.select();
+          try {
+            document.execCommand('copy');
+            alert('URL copiée !');
+          } catch (err) {
+            alert('Erreur lors de la copie. URL: ' + text);
+          }
+          document.body.removeChild(textArea);
+          return;
+        }
+        
+        navigator.clipboard.writeText(text).then(function() {
+          alert('URL copiée !');
+        }, function(err) {
+          console.error('Erreur lors de la copie: ', err);
+          alert('Erreur lors de la copie. URL: ' + text);
+        });
+      }
+    </script>
+  {% endif %}
+{% endblock %}
+

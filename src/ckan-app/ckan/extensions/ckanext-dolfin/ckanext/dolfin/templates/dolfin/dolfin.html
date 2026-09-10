@@ -1,0 +1,156 @@
+{% extends "page.html" %}
+
+{% block subtitle %}{{ _('Harmonisation DOLFIN') }} - {{ pkg_dict.title or pkg_dict.name }}{% endblock %}
+
+{% block breadcrumb_content %}
+  <li>{% link_for _('Jeux de données'), named_route='dataset.search' %}</li>
+  <li>{% link_for pkg_dict.title|truncate(30), named_route='dataset.read', id=pkg_dict.name %}</li>
+  <li class="active"><a href="#">{{ _('Harmonisation DOLFIN') }}</a></li>
+{% endblock %}
+
+{% block primary_content %}
+<section class="module">
+  <div class="module-content">
+    <h1 class="page-heading">{{ _('Harmonisation DOLFIN') }}</h1>
+    <p class="text-muted">
+      {{ _('Associe chaque champ du modèle canonique à une colonne du jeu, ou laisse l\'IA proposer le mapping. À l\'enregistrement, une ressource NGSI-LD / Smart Data Models est générée automatiquement pour l\'interopérabilité (MIM2).') }}
+    </p>
+    {% if h.check_access('sysadmin') %}
+    <p><a href="{{ h.url_for('dolfin.models_list') }}" class="btn btn-default btn-xs"><i class="fa fa-cubes"></i> {{ _('Gérer les modèles DOLFIN') }}</a></p>
+    {% endif %}
+
+    {% if not columns_json or columns_json == '[]' %}
+      <div class="alert alert-warning">
+        {{ _('Aucune ressource CSV chargée dans le datastore pour ce jeu. Dépose un CSV et attends son chargement, puis reviens ici.') }}
+      </div>
+    {% else %}
+      <div class="form-group">
+        <label for="dmod"><strong>{{ _('Modèle DOLFIN') }}</strong></label>
+        <select id="dmod" class="form-control" style="max-width: 420px;"></select>
+        <p id="dmoddesc" class="text-muted" style="margin-top:6px;"></p>
+      </div>
+
+      <p>
+        <button type="button" id="dai" class="btn btn-primary">
+          <i class="fa fa-magic"></i> {{ _('Proposer le mapping (IA)') }}
+        </button>
+        <span id="daimsg" class="text-muted" style="margin-left:10px;"></span>
+      </p>
+
+      <div id="dmapper" style="margin-top:12px;"></div>
+      <div id="drecap" class="text-muted" style="margin:12px 0;"></div>
+
+      <form method="post" action="{{ h.url_for('dolfin.save', id=pkg_dict.name) }}" id="dform" style="margin-top:16px;">
+        {{ h.csrf_input() if h.csrf_input }}
+        <input type="hidden" name="mapping" id="dhmap">
+        <button type="submit" id="dsave" class="btn btn-success" disabled>
+          <i class="fa fa-check"></i> {{ _('Enregistrer + harmoniser') }}
+        </button>
+        <a href="{{ h.url_for('dataset.read', id=pkg_dict.name) }}" class="btn btn-default">{{ _('Annuler') }}</a>
+      </form>
+    {% endif %}
+  </div>
+</section>
+
+{% if columns_json and columns_json != '[]' %}
+<script type="application/json" id="dolfin-data">
+{"models": {{ models_json | safe }}, "columns": {{ columns_json | safe }}, "current": {{ current_mapping|tojson if current_mapping else 'null' }} }
+</script>
+<script>
+(function() {
+  var DATA = JSON.parse(document.getElementById('dolfin-data').textContent);
+  var MOD = DATA.models, cols = DATA.columns || [];
+  var proposeUrl = "{{ h.url_for('dolfin.propose', id=pkg_dict.name) }}";
+
+  function opt(sel) {
+    var s = '<option value="">— colonne —</option>';
+    cols.forEach(function(c) { s += '<option' + (sel === c ? ' selected' : '') + '>' + c + '</option>'; });
+    return s;
+  }
+  function currentModel() { return MOD[document.getElementById('dmod').value || 0]; }
+  function render() {
+    var m = currentModel(), box = document.getElementById('dmapper');
+    document.getElementById('dmoddesc').textContent = m.desc || '';
+    var h = '<div class="form-group"><label>' + '{{ _("Identifiant") }}' + '</label><select id="d_id" class="form-control" style="max-width:420px;">' + opt() + '</select></div>';
+    m.champs.forEach(function(f) {
+      h += '<div class="form-group"><label>' + f + '</label><select data-f="' + f + '" class="form-control" style="max-width:420px;">' + opt() + '</select></div>';
+    });
+    if (m.geo) {
+      h += '<div class="form-group"><label>' + '{{ _("Longitude") }}' + '</label><select id="d_lon" class="form-control" style="max-width:420px;">' + opt() + '</select></div>';
+      h += '<div class="form-group"><label>' + '{{ _("Latitude") }}' + '</label><select id="d_lat" class="form-control" style="max-width:420px;">' + opt() + '</select></div>';
+    }
+    box.innerHTML = h;
+    document.getElementById('dsave').disabled = false;
+    updateRecap();
+  }
+  function build() {
+    var m = currentModel();
+    var mp = { type: m.type, context: 'https://smartdatamodels.org/context.jsonld',
+               id_prefix: 'urn:ngsi-ld:' + m.type + ':', fields: {} };
+    var idf = document.getElementById('d_id'); if (idf && idf.value) mp.id_field = idf.value;
+    document.querySelectorAll('#dmapper select[data-f]').forEach(function(s) {
+      if (s.value) mp.fields[s.getAttribute('data-f')] = s.value;
+    });
+    if (m.geo) {
+      var lo = document.getElementById('d_lon'), la = document.getElementById('d_lat');
+      if (lo && la && lo.value && la.value) mp.location = { lon: lo.value, lat: la.value };
+    }
+    return mp;
+  }
+  function updateRecap() {
+    var el = document.getElementById('drecap'), mp = build(), parts = [];
+    if (mp.id_field) parts.push('identifiant ← ' + mp.id_field);
+    Object.keys(mp.fields || {}).forEach(function(f) { parts.push(f + ' ← ' + mp.fields[f]); });
+    if (mp.location) parts.push('localisation ← ' + mp.location.lon + ' / ' + mp.location.lat);
+    el.innerHTML = parts.length ? ('<strong>' + '{{ _("Récapitulatif :") }}' + '</strong> ' + parts.join(' · ')) : '';
+  }
+  function applyMapping(mp) {
+    render();
+    if (mp.id_field) { var e = document.getElementById('d_id'); if (e) e.value = mp.id_field; }
+    if (mp.fields) Object.keys(mp.fields).forEach(function(f) {
+      var s = document.querySelector('#dmapper select[data-f="' + f + '"]'); if (s) s.value = mp.fields[f];
+    });
+    if (mp.location) {
+      var lo = document.getElementById('d_lon'), la = document.getElementById('d_lat');
+      if (lo && mp.location.lon) lo.value = mp.location.lon;
+      if (la && mp.location.lat) la.value = mp.location.lat;
+    }
+    updateRecap();
+  }
+
+  // remplir le selecteur de modeles
+  var sel = document.getElementById('dmod');
+  MOD.forEach(function(m, i) { var o = document.createElement('option'); o.value = i; o.textContent = m.titre; sel.appendChild(o); });
+  sel.addEventListener('change', render);
+  document.getElementById('dmapper').addEventListener('change', updateRecap);
+  render();
+  // pre-remplir depuis un mapping existant
+  if (DATA.current) { try { applyMapping(JSON.parse(DATA.current)); } catch (e) {} }
+
+  document.getElementById('dform').addEventListener('submit', function() {
+    document.getElementById('dhmap').value = JSON.stringify(build());
+  });
+
+  document.getElementById('dai').addEventListener('click', function() {
+    var btn = this, msg = document.getElementById('daimsg');
+    btn.disabled = true; btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> ' + '{{ _("L\'IA réfléchit…") }}';
+    msg.textContent = '{{ _("Appel du modèle souverain (qwen3.5-35b), le GPU peut mettre 1 à 2 min à démarrer…") }}';
+    fetch(proposeUrl + '?model=' + (sel.value || 0), { credentials: 'same-origin' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        btn.disabled = false; btn.innerHTML = '<i class="fa fa-magic"></i> ' + '{{ _("Proposer le mapping (IA)") }}';
+        if (d.warming) { msg.textContent = d.message; return; }
+        if (d.error) { msg.textContent = 'IA : ' + d.error; return; }
+        applyMapping(d.mapping || {});
+        var n = Object.keys(((d.mapping || {}).fields) || {}).length;
+        msg.textContent = '{{ _("Proposition IA appliquée") }}' + ' (' + n + ' ' + '{{ _("champ(s) mappé(s)). Vérifie, ajuste, puis enregistre.") }}';
+      })
+      .catch(function() {
+        btn.disabled = false; btn.innerHTML = '<i class="fa fa-magic"></i> ' + '{{ _("Proposer le mapping (IA)") }}';
+        msg.textContent = '{{ _("IA indisponible.") }}';
+      });
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

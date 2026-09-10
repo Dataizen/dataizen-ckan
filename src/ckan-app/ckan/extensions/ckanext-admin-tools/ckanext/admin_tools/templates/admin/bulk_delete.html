@@ -1,0 +1,1334 @@
+{% extends "admin/base.html" %}
+
+{% block primary_content_inner %}
+  <h1>{{ _('Suppression en masse') }}</h1>
+  
+  <style>
+    .admin-tabs .nav-tabs {
+      border-bottom: 1px solid #ddd;
+      margin-bottom: 20px;
+    }
+    .admin-tabs .nav-tabs > li {
+      margin-bottom: -1px;
+    }
+    .admin-tabs .nav-tabs > li > a {
+      padding: 10px 15px;
+      display: inline-block;
+      text-decoration: none;
+      color: #333;
+      border: 1px solid transparent;
+      border-bottom-color: transparent;
+      margin-right: 2px;
+      cursor: pointer;
+    }
+    .admin-tabs .nav-tabs > li > a:hover {
+      background-color: #eee;
+      border-color: #eee #eee #ddd;
+    }
+    .admin-tabs .nav-tabs > li.active > a,
+    .admin-tabs .nav-tabs > li.active > a:hover,
+    .admin-tabs .nav-tabs > li.active > a:focus {
+      color: #555;
+      background-color: #fff;
+      border: 1px solid #ddd;
+      border-bottom-color: transparent;
+      cursor: default;
+    }
+  </style>
+  
+  <div class="admin-tabs">
+    <ul class="nav nav-tabs" role="tablist">
+      <li role="presentation" class="active">
+        <a href="#organizations" aria-controls="organizations" role="tab" data-toggle="tab">{{ _('Organisations') }}</a>
+      </li>
+      <li role="presentation">
+        <a href="#datasets" aria-controls="datasets" role="tab" data-toggle="tab">{{ _('Datasets') }}</a>
+      </li>
+      <li role="presentation">
+        <a href="#members" aria-controls="members" role="tab" data-toggle="tab">{{ _('Membres') }}</a>
+      </li>
+    </ul>
+
+    <div class="tab-content" style="margin-top: 20px;">
+      <!-- Tab Organizations -->
+      <div role="tabpanel" class="tab-pane active" id="organizations">
+        <div class="form-group">
+          <label>{{ _('Sélectionner les organisations à supprimer') }}</label>
+          <div id="organizations-list" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 10px;">
+            <p class="text-muted">{{ _('Chargement...') }}</p>
+          </div>
+        </div>
+        <div style="margin-top: 15px;">
+          <button id="delete-organizations-btn" class="btn btn-danger btn-lg" disabled style="min-width: 250px;">
+            <i class="fa fa-trash"></i> {{ _('Supprimer les organisations sélectionnées') }}
+          </button>
+          <span id="organizations-count" class="badge badge-warning" style="margin-left: 10px; font-size: 14px; padding: 8px 12px;">0 sélectionnée(s)</span>
+        </div>
+        <div class="alert alert-warning" style="margin-top: 15px; margin-bottom: 0;">
+          <i class="fa fa-exclamation-triangle"></i> <strong>Attention :</strong> La suppression d'une organisation supprimera également tous ses datasets.
+        </div>
+        <div id="organizations-result" style="margin-top: 20px;"></div>
+      </div>
+
+      <!-- Tab Datasets -->
+      <div role="tabpanel" class="tab-pane" id="datasets">
+        <div class="form-group">
+          <label>{{ _('Sélectionner les datasets à supprimer') }}</label>
+          <div id="datasets-list" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 10px;">
+            <p class="text-muted">{{ _('Chargement...') }}</p>
+          </div>
+        </div>
+        <div style="margin-top: 15px;">
+          <button id="delete-datasets-btn" class="btn btn-danger btn-lg" disabled style="min-width: 250px;">
+            <i class="fa fa-trash"></i> {{ _('Supprimer les datasets sélectionnés') }}
+          </button>
+          <span id="datasets-count" class="badge badge-info" style="margin-left: 10px; font-size: 14px; padding: 8px 12px;">0 sélectionné(s)</span>
+        </div>
+        <div id="datasets-result" style="margin-top: 20px;"></div>
+      </div>
+
+
+      <!-- Tab Members -->
+      <div role="tabpanel" class="tab-pane" id="members">
+        <div class="form-group">
+          <label>{{ _('Sélectionner l\'organisation') }}</label>
+          <select id="org-select" class="form-control" style="margin-bottom: 15px;">
+            <option value="">{{ _('Chargement...') }}</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>{{ _('Sélectionner les membres à supprimer') }}</label>
+          <div id="members-list" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 10px;">
+            <p class="text-muted">{{ _('Sélectionnez d\'abord une organisation') }}</p>
+          </div>
+        </div>
+        <div style="margin-top: 15px;">
+          <button id="delete-members-btn" class="btn btn-danger btn-lg" disabled style="min-width: 250px;">
+            <i class="fa fa-trash"></i> {{ _('Supprimer les membres sélectionnés') }}
+          </button>
+          <span id="members-count" class="badge badge-info" style="margin-left: 10px; font-size: 14px; padding: 8px 12px;">0 sélectionné(s)</span>
+        </div>
+        <div id="members-result" style="margin-top: 20px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      // Variables de traduction (échappées correctement pour JavaScript)
+      var i18n = {
+        selectAll: {{ _("Tout sélectionner")|tojson }},
+        selectOrg: {{ _("Sélectionner une organisation")|tojson }},
+        selectOrgFirst: {{ _("Sélectionnez d'abord une organisation")|tojson }},
+        noMembersFound: {{ _("Aucun membre trouvé")|tojson }},
+        confirmDeleteDatasets: {{ _("Êtes-vous sûr de vouloir supprimer")|tojson }},
+        datasets: {{ _("dataset(s)")|tojson }},
+        confirmDeleteOrgs: {{ _("Êtes-vous sûr de vouloir supprimer")|tojson }},
+        organizations: {{ _("organisation(s)")|tojson }},
+        confirmDeleteMembers: {{ _("Êtes-vous sûr de vouloir supprimer")|tojson }},
+        members: {{ _("membre(s)")|tojson }},
+        success: {{ _("Suppression réussie")|tojson }},
+        failures: {{ _("Échecs")|tojson }},
+        error: {{ _("Erreur")|tojson }},
+        unknownError: {{ _("Erreur inconnue")|tojson }}
+      };
+      
+      // Fonction pour échapper le HTML (sécurité XSS)
+      function escapeHtml(text) {
+        if (!text) return '';
+        var map = {
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#039;'
+        };
+        return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
+      }
+      
+      // Attendre que jQuery soit disponible
+      function initBulkDelete() {
+        console.log('[BulkDelete] Initialisation...');
+        if (typeof jQuery === 'undefined') {
+          console.log('[BulkDelete] jQuery non disponible, attente...');
+          setTimeout(initBulkDelete, 100);
+          return;
+        }
+        var $ = jQuery;
+        console.log('[BulkDelete] jQuery disponible, démarrage...');
+        
+        // Charger les datasets
+        function loadDatasets() {
+          console.log('[BulkDelete] Chargement des datasets...');
+          
+          // Vérifier que l'élément existe
+          var $datasetsList = $('#datasets-list');
+          if ($datasetsList.length === 0) {
+            console.error('[BulkDelete] Élément datasets-list introuvable!');
+            return;
+          }
+          
+          // Vérifier que le tab-pane existe
+          var $tabPane = $('#datasets');
+          if ($tabPane.length === 0) {
+            console.error('[BulkDelete] Tab-pane datasets introuvable!');
+            return;
+          }
+          
+          // Toujours forcer la visibilité si le tab est actif
+          var isActive = $tabPane.hasClass('active');
+          if (isActive) {
+            ensureTabPaneVisible($tabPane);
+          }
+          
+          // Toujours charger les données, même si le tab n'est pas actif
+          // Le contenu sera disponible quand l'utilisateur cliquera sur le tab
+          $datasetsList.html('<p class="text-muted">Chargement de tous les datasets...</p>');
+          
+          // Utiliser package_search avec pagination pour récupérer TOUS les datasets
+          // package_list peut avoir une limite par défaut, donc on utilise package_search
+          var allDatasets = [];
+          var offset = 0;
+          var limit = 1000;
+          var totalCount = 0;
+          
+          function fetchDatasetsPage() {
+            $.ajax({
+              url: '/api/action/package_search',
+              method: 'GET',
+              dataType: 'json',
+              data: {
+                rows: limit,
+                start: offset,
+                include_private: true,
+                include_drafts: true
+              },
+              success: function(data) {
+                console.log('[BulkDelete] Réponse package_search (offset=' + offset + '):', data);
+                if (data.success && data.result) {
+                  var results = data.result.results || [];
+                  var count = data.result.count || 0;
+                  
+                  // Extraire les noms des datasets depuis les résultats
+                  var datasetNames = results.map(function(ds) {
+                    return ds.name || ds.id;
+                  });
+                  
+                  allDatasets = allDatasets.concat(datasetNames);
+                  totalCount = count;
+                  
+                  console.log('[BulkDelete] Récupéré ' + allDatasets.length + ' / ' + totalCount + ' datasets');
+                  
+                  // Si on a récupéré tous les datasets, afficher
+                  if (allDatasets.length >= totalCount || results.length < limit) {
+                    displayDatasets(allDatasets, totalCount);
+                  } else {
+                    // Continuer à récupérer les pages suivantes
+                    offset += limit;
+                    fetchDatasetsPage();
+                  }
+                } else {
+                  console.error('[BulkDelete] Erreur package_search:', data.error);
+                  $datasetsList.html('<p class="text-danger">Erreur lors du chargement des datasets: ' + (data.error || 'Erreur inconnue') + '</p>');
+                }
+              },
+              error: function(xhr, status, error) {
+                console.error('[BulkDelete] Erreur AJAX package_search:', xhr, status, error);
+                $datasetsList.html('<p class="text-danger">Erreur lors du chargement des datasets: ' + error + '</p>');
+              }
+            });
+          }
+          
+          function displayDatasets(datasets, totalCount) {
+            console.log('[BulkDelete] Affichage de ' + datasets.length + ' datasets');
+            
+            var html = '<div class="checkbox"><label><input type="checkbox" id="select-all-datasets"> <strong>' + i18n.selectAll + '</strong></label></div><hr>';
+            if (datasets.length === 0) {
+              html += '<p class="text-muted">Aucun dataset trouvé</p>';
+            } else {
+              // Ajouter un champ de recherche pour filtrer
+              html += '<div class="form-group" style="margin-bottom: 10px;">';
+              html += '<input type="text" id="dataset-search" class="form-control" placeholder="Rechercher un dataset... (' + datasets.length + ' datasets disponibles)">';
+              html += '</div>';
+              html += '<div id="datasets-container">';
+              
+              // Afficher seulement les 100 premiers initialement pour éviter les problèmes de performance
+              var datasetsToShow = datasets.slice(0, 100);
+              
+              if (datasets.length > 100) {
+                html += '<p class="text-info"><small>Affichage de ' + datasetsToShow.length + ' datasets sur ' + datasets.length + '. Utilisez la recherche pour filtrer et voir tous les résultats.</small></p>';
+              }
+              
+              // Stocker tous les datasets dans un attribut data pour la recherche
+              $datasetsList.attr('data-all-datasets', JSON.stringify(datasets));
+              
+              datasetsToShow.forEach(function(dataset) {
+                html += '<div class="checkbox dataset-item" style="margin-bottom: 8px; padding: 5px 0;"><label style="display: block; cursor: pointer;"><input type="checkbox" class="dataset-checkbox" value="' + escapeHtml(dataset) + '" style="margin-right: 8px;"> <span>' + escapeHtml(dataset) + '</span></label></div>';
+              });
+              
+              html += '</div>';
+              
+              // Si plus de 100 datasets, ajouter un message
+              if (datasets.length > 100) {
+                html += '<p class="text-muted"><small>Pour voir tous les datasets, utilisez la recherche ci-dessus.</small></p>';
+              }
+            }
+            
+            // Vérifier à nouveau que l'élément existe avant d'injecter
+            if ($datasetsList.length > 0) {
+              $datasetsList.html(html);
+              console.log('[BulkDelete] HTML datasets injecté (' + html.length + ' caractères)');
+              
+              // Forcer la visibilité du tab-pane si actif
+              var isActive = $tabPane.hasClass('active');
+              if (isActive) {
+                console.log('[BulkDelete] Tab datasets est actif, forçage visibilité...');
+                ensureTabPaneVisible($tabPane);
+              } else {
+                console.log('[BulkDelete] Tab datasets n\'est pas actif, contenu chargé en arrière-plan');
+              }
+              
+              // Vérifier après injection
+              setTimeout(function() {
+                var injectedHtml = $datasetsList.html();
+                var isVisible = $datasetsList.is(':visible');
+                var offsetWidth = $datasetsList.length > 0 ? $datasetsList[0].offsetWidth : 0;
+                console.log('[BulkDelete] Vérification après injection: HTML présent?', injectedHtml.length > 0);
+                console.log('[BulkDelete] Nombre de checkboxes:', $('.dataset-checkbox').length);
+                console.log('[BulkDelete] Tab-pane datasets actif?', $tabPane.hasClass('active'));
+                console.log('[BulkDelete] Tab-pane datasets visible?', $tabPane.is(':visible'));
+                console.log('[BulkDelete] datasets-list visible?', isVisible, 'width:', offsetWidth);
+              }, 100);
+              
+              // Gestion de la recherche (recherche dans TOUS les datasets, pas seulement les 100 premiers)
+              $('#dataset-search').off('input').on('input', function() {
+                var searchTerm = $(this).val().toLowerCase();
+                var allDatasets = JSON.parse($datasetsList.attr('data-all-datasets') || '[]');
+                var filtered = allDatasets.filter(function(ds) {
+                  return ds.toLowerCase().includes(searchTerm);
+                });
+                
+                console.log('[BulkDelete] Recherche "' + searchTerm + '": ' + filtered.length + ' résultats sur ' + allDatasets.length + ' datasets');
+                
+                // Supprimer les messages précédents s'ils existent
+                $('#datasets-container').nextAll('.text-info, .text-warning, .text-success').remove();
+                
+                var filteredHtml = '';
+                // Afficher TOUS les résultats filtrés (pas de limite à 100)
+                filtered.forEach(function(dataset) {
+                  filteredHtml += '<div class="checkbox dataset-item" style="margin-bottom: 8px; padding: 5px 0;"><label style="display: block; cursor: pointer;"><input type="checkbox" class="dataset-checkbox" value="' + escapeHtml(dataset) + '" style="margin-right: 8px;"> <span>' + escapeHtml(dataset) + '</span></label></div>';
+                });
+                
+                $('#datasets-container').html(filteredHtml);
+                
+                // Afficher le nombre de résultats trouvés
+                if (filtered.length === 0 && searchTerm) {
+                  $('#datasets-container').after('<p class="text-warning"><small>Aucun résultat trouvé pour "' + escapeHtml(searchTerm) + '"</small></p>');
+                } else if (filtered.length > 0) {
+                  $('#datasets-container').after('<p class="text-success"><small>' + filtered.length + ' résultat(s) trouvé(s) sur ' + allDatasets.length + ' datasets</small></p>');
+                }
+                
+                // Réinitialiser les événements
+                $('#select-all-datasets').off('change').on('change', function() {
+                  $('.dataset-checkbox').prop('checked', this.checked);
+                  updateDeleteButton('datasets');
+                });
+                
+                $('.dataset-checkbox').off('change').on('change', function() {
+                  updateDeleteButton('datasets');
+                });
+              });
+              
+              $('#select-all-datasets').off('change').on('change', function() {
+                $('.dataset-checkbox').prop('checked', this.checked);
+                updateDeleteButton('datasets');
+              });
+              
+              $('.dataset-checkbox').off('change').on('change', function() {
+                updateDeleteButton('datasets');
+              });
+            }
+          }
+          
+          // Démarrer le chargement des datasets avec pagination
+          fetchDatasetsPage();
+        }
+      
+      // Fonction pour forcer la visibilité d'un tab-pane
+      function ensureTabPaneVisible($tabPane) {
+        if ($tabPane.length === 0) {
+          console.warn('[BulkDelete] ensureTabPaneVisible: tabPane introuvable');
+          return false;
+        }
+        
+        console.log('[BulkDelete] ensureTabPaneVisible appelé pour:', $tabPane.attr('id'));
+        
+        // Forcer la visibilité du tab-pane lui-même avec !important
+        var paneElement = $tabPane[0];
+        paneElement.style.setProperty('display', 'block', 'important');
+        paneElement.style.setProperty('visibility', 'visible', 'important');
+        paneElement.style.setProperty('opacity', '1', 'important');
+        paneElement.style.setProperty('position', 'relative', 'important');
+        
+        // Ajouter la classe active si elle n'est pas déjà là
+        $tabPane.addClass('active');
+        
+        // Forcer la visibilité de tous les parents
+        var $parent = $tabPane.parent();
+        var depth = 0;
+        while ($parent.length > 0 && !$parent.is('body') && depth < 10) {
+          var parentElement = $parent[0];
+          var computedDisplay = window.getComputedStyle(parentElement).display;
+          var computedVisibility = window.getComputedStyle(parentElement).visibility;
+          var offsetWidth = parentElement.offsetWidth;
+          
+          if (computedDisplay === 'none' || computedVisibility === 'hidden' || offsetWidth === 0) {
+            console.log('[BulkDelete] Parent caché détecté:', parentElement.tagName, parentElement.className, 'display:', computedDisplay, 'visibility:', computedVisibility, 'width:', offsetWidth);
+            parentElement.style.setProperty('display', 'block', 'important');
+            parentElement.style.setProperty('visibility', 'visible', 'important');
+            parentElement.style.setProperty('opacity', '1', 'important');
+          }
+          $parent = $parent.parent();
+          depth++;
+        }
+        
+        // Vérifier que le contenu interne est aussi visible
+        var $content = $tabPane.find('#datasets-list, #members-list, #organizations-list');
+        $content.each(function() {
+          var contentElement = this;
+          contentElement.style.setProperty('display', 'block', 'important');
+          contentElement.style.setProperty('visibility', 'visible', 'important');
+        });
+        
+        // Vérifier la visibilité finale
+        setTimeout(function() {
+          var isVisible = $tabPane.is(':visible');
+          var offsetWidth = paneElement.offsetWidth;
+          var offsetHeight = paneElement.offsetHeight;
+          console.log('[BulkDelete] Vérification finale visibilité', $tabPane.attr('id'), '- visible:', isVisible, 'width:', offsetWidth, 'height:', offsetHeight);
+        }, 10);
+        
+        return true;
+      }
+      
+      // Charger les organisations
+      function loadOrganizations() {
+        console.log('[BulkDelete] Chargement des organisations...');
+        
+        var $orgsList = $('#organizations-list');
+        if ($orgsList.length === 0) {
+          console.error('[BulkDelete] Élément organizations-list introuvable!');
+          return;
+        }
+        
+        // Forcer la visibilité du tab-pane organisations si actif
+        var $tabPane = $('#organizations');
+        if ($tabPane.length > 0 && $tabPane.hasClass('active')) {
+          ensureTabPaneVisible($tabPane);
+        }
+        
+        $orgsList.html('<p class="text-muted">Chargement...</p>');
+        // Utiliser l'action admin qui ignore les permissions pour récupérer TOUTES les organisations
+        // CKAN API nécessite POST pour toutes les actions
+        $.ajax({
+          url: '/api/action/admin_get_all_organizations',
+          method: 'POST',
+          dataType: 'json',
+          contentType: 'application/json',
+          data: JSON.stringify({}),
+          success: function(data) {
+            console.log('[BulkDelete] Réponse organisations complète:', data);
+            console.log('[BulkDelete] success:', data.success);
+            console.log('[BulkDelete] result:', data.result);
+            
+            if (!data.success) {
+              console.error('[BulkDelete] Erreur dans la réponse:', data.error);
+              $orgsList.html('<p class="text-danger">Erreur lors du chargement: ' + (data.error || 'Erreur inconnue') + '</p>');
+              return;
+            }
+            
+            // CKAN wrappe la réponse de l'action dans {success: true, result: {...}}
+            // Notre action retourne {success: true, result: Array, count: N}
+            // Donc data.result est {success: true, result: Array, count: N}
+            var actionResult = data.result;
+            var orgsArray = null;
+            
+            console.log('[BulkDelete] actionResult type:', typeof actionResult);
+            console.log('[BulkDelete] actionResult.success:', actionResult && actionResult.success);
+            console.log('[BulkDelete] actionResult.result type:', actionResult && typeof actionResult.result);
+            console.log('[BulkDelete] actionResult.result isArray:', actionResult && Array.isArray(actionResult.result));
+            console.log('[BulkDelete] actionResult isArray:', Array.isArray(actionResult));
+            
+            // Essayer plusieurs façons de trouver le tableau d'organisations
+            if (actionResult && actionResult.result && Array.isArray(actionResult.result)) {
+              // Structure imbriquée : data.result.result contient le tableau (cas le plus probable)
+              orgsArray = actionResult.result;
+              console.log('[BulkDelete] Structure imbriquee detectee (actionResult.result), nombre d organisations:', orgsArray.length);
+            } else if (Array.isArray(actionResult)) {
+              // Structure directe : data.result est directement le tableau
+              orgsArray = actionResult;
+              console.log('[BulkDelete] Structure directe detectee, nombre d organisations:', orgsArray.length);
+            } else {
+              // Dernier recours : essayer de trouver un tableau dans actionResult
+              console.error('[BulkDelete] Format de reponse inattendu:', actionResult);
+              console.error('[BulkDelete] actionResult keys:', actionResult ? Object.keys(actionResult) : 'null');
+              
+              // Essayer de trouver le tableau dans n'importe quelle propriété
+              if (actionResult) {
+                for (var key in actionResult) {
+                  if (Array.isArray(actionResult[key])) {
+                    console.log('[BulkDelete] Tableau trouve dans la propriete:', key);
+                    orgsArray = actionResult[key];
+                    break;
+                  }
+                }
+              }
+              
+              if (!orgsArray || !Array.isArray(orgsArray)) {
+                $orgsList.html('<p class="text-danger">Format de reponse inattendu. Verifiez la console pour plus de details.</p>');
+                return;
+              }
+            }
+            
+            // Vérifier que orgsArray est bien un tableau
+            if (!orgsArray || !Array.isArray(orgsArray)) {
+              console.error('[BulkDelete] orgsArray nest pas un tableau:', orgsArray);
+              $orgsList.html('<p class="text-danger">Erreur: les donnees recues ne sont pas au format attendu. Verifiez la console pour plus de details.</p>');
+              return;
+            }
+            
+            if (orgsArray.length === 0) {
+              console.log('[BulkDelete] Aucune organisation trouvée');
+              var html = '<div class="form-group" style="margin-bottom: 10px;">';
+              html += '<input type="text" id="organization-search" class="form-control" placeholder="Rechercher une organisation...">';
+              html += '</div>';
+              html += '<div id="organizations-container">';
+              html += '<p class="text-muted">Aucune organisation trouvée</p>';
+              html += '</div>';
+              $orgsList.html(html);
+              return;
+            }
+            
+            console.log('[BulkDelete] ' + orgsArray.length + ' organisations trouvées');
+            if (orgsArray.length > 0) {
+              console.log('[BulkDelete] Première organisation:', orgsArray[0] ? orgsArray[0].name : 'undefined');
+              console.log('[BulkDelete] Dernière organisation:', orgsArray[orgsArray.length - 1] ? orgsArray[orgsArray.length - 1].name : 'undefined');
+            }
+            
+            var html = '<div class="form-group" style="margin-bottom: 10px;">';
+            html += '<input type="text" id="organization-search" class="form-control" placeholder="Rechercher une organisation...">';
+            html += '</div>';
+            html += '<div id="organizations-container">';
+            
+            // Les organisations ont déjà leur dataset_count depuis l'API backend
+            var orgsWithCounts = orgsArray;
+            
+            // Vérification finale avant forEach
+            if (!Array.isArray(orgsWithCounts)) {
+              console.error('[BulkDelete] ERREUR: orgsWithCounts nest pas un tableau avant forEach:', orgsWithCounts);
+              $orgsList.html('<p class="text-danger">Erreur: les donnees ne sont pas au format attendu.</p>');
+              return;
+            }
+            
+            // Stocker toutes les organisations dans un attribut data pour la recherche
+            $orgsList.attr('data-all-organizations', JSON.stringify(orgsWithCounts));
+            
+            // Afficher toutes les organisations avec le nombre de datasets
+            orgsWithCounts.forEach(function(org) {
+              var orgTitle = org.title || org.name || '';
+              var displayText = org.name;
+              if (orgTitle && orgTitle !== org.name) {
+                displayText += ' (' + orgTitle + ')';
+              }
+              // Ajouter le nombre de datasets
+              var datasetCount = org.dataset_count !== undefined ? org.dataset_count : '?';
+              displayText += ' (' + datasetCount + ' jeux de données)';
+              html += '<div class="checkbox organization-item" style="margin-bottom: 8px; padding: 5px 0;"><label style="display: block; cursor: pointer;"><input type="checkbox" class="org-checkbox" value="' + escapeHtml(org.id) + '" style="margin-right: 8px;"> <span>' + escapeHtml(displayText) + '</span></label></div>';
+            });
+            
+            html += '</div>';
+            
+            if ($orgsList.length > 0) {
+              $orgsList.html(html);
+              console.log('[BulkDelete] HTML organisations injecté (' + html.length + ' caractères)');
+              
+              // Gestion de la recherche
+              $('#organization-search').on('input', function() {
+                var searchTerm = $(this).val().toLowerCase();
+                var allOrgs = JSON.parse($orgsList.attr('data-all-organizations') || '[]');
+                var filtered = allOrgs.filter(function(org) {
+                  var orgName = (org.name || '').toLowerCase();
+                  var orgTitle = ((org.title || org.name) || '').toLowerCase();
+                  return orgName.includes(searchTerm) || orgTitle.includes(searchTerm);
+                });
+                
+                var filteredHtml = '';
+                filtered.forEach(function(org) {
+                  var orgTitle = org.title || org.name || '';
+                  var displayText = org.name;
+                  if (orgTitle && orgTitle !== org.name) {
+                    displayText += ' (' + orgTitle + ')';
+                  }
+                  // Ajouter le nombre de datasets
+                  var datasetCount = org.dataset_count !== undefined ? org.dataset_count : '?';
+                  displayText += ' (' + datasetCount + ' jeux de données)';
+                  filteredHtml += '<div class="checkbox organization-item" style="margin-bottom: 8px; padding: 5px 0;"><label style="display: block; cursor: pointer;"><input type="checkbox" class="org-checkbox" value="' + escapeHtml(org.id) + '" style="margin-right: 8px;"> <span>' + escapeHtml(displayText) + '</span></label></div>';
+                });
+                
+                $('#organizations-container').html(filteredHtml);
+                
+                // Réinitialiser les événements
+                $('.org-checkbox').off('change').on('change', function() {
+                  updateDeleteButton('organizations');
+                });
+              });
+              
+              // Attacher les gestionnaires d'événements avec délégation
+              var $orgsContainer = $('#organizations-container');
+              $orgsContainer.off('change', '.org-checkbox').on('change', '.org-checkbox', function() {
+                console.log('[BulkDelete] Checkbox organisation changée:', this.value, this.checked);
+                updateDeleteButton('organizations');
+              });
+              
+              console.log('[BulkDelete] Gestionnaires organisations attachés avec délégation');
+            } else {
+              console.error('[BulkDelete] Élément organizations-list a disparu avant injection!');
+            }
+          },
+          error: function(xhr, status, error) {
+            console.error('[BulkDelete] Erreur AJAX organisations:', xhr, status, error);
+            console.error('[BulkDelete] Status code:', xhr.status);
+            console.error('[BulkDelete] Response text:', xhr.responseText);
+            try {
+              var errorData = JSON.parse(xhr.responseText);
+              console.error('[BulkDelete] Error data:', errorData);
+              var errorMsg = errorData.error ? (errorData.error.message || errorData.error) : (errorData.message || error);
+              $orgsList.html('<p class="text-danger">Erreur lors du chargement des organisations: ' + errorMsg + '</p>');
+            } catch (e) {
+              $orgsList.html('<p class="text-danger">Erreur lors du chargement des organisations: ' + error + ' (Status: ' + xhr.status + ')</p>');
+            }
+          }
+        });
+      }
+      
+      // Charger les organisations pour le select
+      function loadOrgSelect() {
+        $.ajax({
+          url: '/api/action/organization_list',
+          method: 'GET',
+          dataType: 'json',
+          data: {
+            all_fields: true,
+            limit: 10000  // Augmenter la limite pour récupérer toutes les organisations
+          },
+          success: function(data) {
+            if (data.success && data.result) {
+              var html = '<option value="">' + i18n.selectOrg + '</option>';
+              data.result.forEach(function(org) {
+                html += '<option value="' + org.id + '">' + org.name + ' (' + (org.title || org.name) + ')</option>';
+              });
+              $('#org-select').html(html);
+            } else {
+              $('#org-select').html('<option value="">Erreur lors du chargement</option>');
+            }
+          },
+          error: function(xhr, status, error) {
+            $('#org-select').html('<option value="">Erreur: ' + error + '</option>');
+            console.error('Erreur chargement organisations (select):', xhr, status, error);
+          }
+        });
+      }
+      
+      // Charger les membres d'une organisation
+      function loadMembers(orgId) {
+        console.log('[BulkDelete] Chargement des membres pour organisation:', orgId);
+        
+        var $membersList = $('#members-list');
+        if ($membersList.length === 0) {
+          console.error('[BulkDelete] Élément members-list introuvable!');
+          return;
+        }
+        
+        if (!orgId) {
+          $membersList.html('<p class="text-muted">' + i18n.selectOrgFirst + '</p>');
+          return;
+        }
+        
+        // Toujours forcer la visibilité si le tab est actif
+        var $tabPane = $('#members');
+        if ($tabPane.length > 0 && $tabPane.hasClass('active')) {
+          ensureTabPaneVisible($tabPane);
+        }
+        
+        $membersList.html('<p class="text-muted">Chargement...</p>');
+        $.ajax({
+          url: '/api/action/organization_show',
+          method: 'GET',
+          dataType: 'json',
+          data: {id: orgId, include_users: true},
+          success: function(data) {
+            console.log('[BulkDelete] Réponse membres:', data);
+            if (data.success && data.result && data.result.users) {
+              var html = '<div class="form-group" style="margin-bottom: 10px;">';
+              html += '<input type="text" id="member-search" class="form-control" placeholder="Rechercher un membre...">';
+              html += '</div>';
+              html += '<div id="members-container">';
+              
+              if (data.result.users.length === 0) {
+                html += '<p class="text-muted">' + i18n.noMembersFound + '</p>';
+              } else {
+                console.log('[BulkDelete] ' + data.result.users.length + ' membres trouvés');
+                
+                // Stocker tous les membres dans un attribut data pour la recherche
+                $membersList.attr('data-all-members', JSON.stringify(data.result.users));
+                
+                data.result.users.forEach(function(user) {
+                  var userFullname = user.fullname || user.name || '';
+                  var displayText = user.name;
+                  if (userFullname && userFullname !== user.name) {
+                    displayText += ' (' + userFullname + ')';
+                  }
+                  html += '<div class="checkbox member-item" style="margin-bottom: 8px; padding: 5px 0;"><label style="display: block; cursor: pointer;"><input type="checkbox" class="member-checkbox" value="' + escapeHtml(user.name) + '" style="margin-right: 8px;"> <span>' + escapeHtml(displayText) + '</span></label></div>';
+                });
+              }
+              
+              html += '</div>';
+              
+              if ($membersList.length > 0) {
+                $membersList.html(html);
+                console.log('[BulkDelete] HTML membres injecté (' + html.length + ' caractères)');
+                
+                // Forcer la visibilité du tab-pane si actif
+                if ($tabPane.hasClass('active')) {
+                  ensureTabPaneVisible($tabPane);
+                }
+                
+                // Gestion de la recherche
+                $('#member-search').on('input', function() {
+                  var searchTerm = $(this).val().toLowerCase();
+                  var allMembers = JSON.parse($membersList.attr('data-all-members') || '[]');
+                  var filtered = allMembers.filter(function(user) {
+                    var userName = (user.name || '').toLowerCase();
+                    var userFullname = ((user.fullname || user.name) || '').toLowerCase();
+                    return userName.includes(searchTerm) || userFullname.includes(searchTerm);
+                  });
+                  
+                  var filteredHtml = '';
+                  filtered.forEach(function(user) {
+                    var userFullname = user.fullname || user.name || '';
+                    var displayText = user.name;
+                    if (userFullname && userFullname !== user.name) {
+                      displayText += ' (' + userFullname + ')';
+                    }
+                    filteredHtml += '<div class="checkbox member-item" style="margin-bottom: 8px; padding: 5px 0;"><label style="display: block; cursor: pointer;"><input type="checkbox" class="member-checkbox" value="' + escapeHtml(user.name) + '" style="margin-right: 8px;"> <span>' + escapeHtml(displayText) + '</span></label></div>';
+                  });
+                  
+                  $('#members-container').html(filteredHtml);
+                  
+                  // Réinitialiser les événements
+                  $('.member-checkbox').off('change').on('change', function() {
+                    updateDeleteButton('members');
+                  });
+                });
+                
+                // Attacher les gestionnaires d'événements avec délégation
+                var $membersContainer = $('#members-container');
+                $membersContainer.off('change', '.member-checkbox').on('change', '.member-checkbox', function() {
+                  console.log('[BulkDelete] Checkbox membre changée:', this.value, this.checked);
+                  updateDeleteButton('members');
+                });
+                
+                console.log('[BulkDelete] Gestionnaires membres attachés avec délégation');
+              } else {
+                console.error('[BulkDelete] Élément members-list a disparu avant injection!');
+              }
+            } else {
+              console.error('[BulkDelete] Erreur dans la réponse membres:', data);
+              $membersList.html('<p class="text-danger">Erreur lors du chargement: ' + (data.error || 'Erreur inconnue') + '</p>');
+            }
+          },
+          error: function(xhr, status, error) {
+            console.error('[BulkDelete] Erreur AJAX membres:', xhr, status, error);
+            $membersList.html('<p class="text-danger">Erreur lors du chargement des membres: ' + error + '</p>');
+          }
+        });
+      }
+      
+      function updateDeleteButton(type) {
+        var count = 0;
+        console.log('[BulkDelete] updateDeleteButton appelé pour type:', type);
+        
+        if (type === 'datasets') {
+          count = $('.dataset-checkbox:checked').length;
+          console.log('[BulkDelete] Datasets sélectionnés:', count);
+          $('#delete-datasets-btn').prop('disabled', count === 0);
+          $('#datasets-count').text(count + ' sélectionné(s)');
+          if (count > 0) {
+            $('#datasets-count').removeClass('badge-info').addClass('badge-danger');
+          } else {
+            $('#datasets-count').removeClass('badge-danger').addClass('badge-info');
+          }
+        } else if (type === 'organizations') {
+          count = $('.org-checkbox:checked').length;
+          console.log('[BulkDelete] Organisations sélectionnées:', count, 'checkboxes trouvées:', $('.org-checkbox').length);
+          var $btn = $('#delete-organizations-btn');
+          var $badge = $('#organizations-count');
+          console.log('[BulkDelete] Bouton trouvé:', $btn.length, 'Badge trouvé:', $badge.length);
+          $btn.prop('disabled', count === 0);
+          $badge.text(count + ' sélectionnée(s)');
+          if (count > 0) {
+            $badge.removeClass('badge-warning').addClass('badge-danger');
+            console.log('[BulkDelete] Bouton organisations activé');
+          } else {
+            $badge.removeClass('badge-danger').addClass('badge-warning');
+            console.log('[BulkDelete] Bouton organisations désactivé');
+          }
+        } else if (type === 'members') {
+          count = $('.member-checkbox:checked').length;
+          console.log('[BulkDelete] Membres sélectionnés:', count, 'checkboxes trouvées:', $('.member-checkbox').length);
+          var $btn = $('#delete-members-btn');
+          var $badge = $('#members-count');
+          console.log('[BulkDelete] Bouton membres trouvé:', $btn.length, 'Badge trouvé:', $badge.length);
+          $btn.prop('disabled', count === 0);
+          $badge.text(count + ' sélectionné(s)');
+          if (count > 0) {
+            $badge.removeClass('badge-info').addClass('badge-danger');
+            console.log('[BulkDelete] Bouton membres activé');
+          } else {
+            $badge.removeClass('badge-danger').addClass('badge-info');
+            console.log('[BulkDelete] Bouton membres désactivé');
+          }
+        }
+      }
+      
+      // Supprimer les datasets
+      $('#delete-datasets-btn').on('click', function() {
+        var selected = $('.dataset-checkbox:checked').map(function() { return this.value; }).get();
+        if (selected.length === 0) return;
+        
+        // Sécuriser l'accès à i18n avec des variables locales
+        var confirmMsg = (typeof i18n !== 'undefined' && i18n.confirmDeleteDatasets) ? i18n.confirmDeleteDatasets : 'Etes-vous sur de vouloir supprimer';
+        var datasetsLabel = (typeof i18n !== 'undefined' && i18n.datasets) ? i18n.datasets : 'dataset(s)';
+        if (!confirm(confirmMsg + ' ' + selected.length + ' ' + datasetsLabel + '?')) {
+          return;
+        }
+        
+        $.ajax({
+          url: '/api/action/admin_bulk_delete_datasets',
+          method: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({dataset_ids: selected}),
+          success: function(data) {
+            if (data.result && data.result.success) {
+              var successCount = data.result.deleted_count || 0;
+              var errorCount = data.result.failed_count || 0;
+              var successMsg = (typeof i18n !== 'undefined' && i18n.success) ? i18n.success : 'Suppression reussie';
+              var failuresMsg = (typeof i18n !== 'undefined' && i18n.failures) ? i18n.failures : 'Echecs';
+              var resultHtml = '<div class="alert alert-success">' + successMsg + ': ' + successCount + ' / ' + failuresMsg + ': ' + errorCount + '</div>';
+              $('#datasets-result').html(resultHtml);
+              loadDatasets();
+            } else {
+              var errorMsg = (typeof i18n !== 'undefined' && i18n.error) ? i18n.error : 'Erreur';
+              var unknownErrorMsg = (typeof i18n !== 'undefined' && i18n.unknownError) ? i18n.unknownError : 'Erreur inconnue';
+              $('#datasets-result').html('<div class="alert alert-danger">' + errorMsg + ': ' + (data.error || unknownErrorMsg) + '</div>');
+            }
+          }
+        });
+      });
+      
+      // Supprimer les organisations (délégation d'événements pour s'assurer que ça fonctionne)
+      $(document).on('click', '#delete-organizations-btn', function() {
+        console.log('[BulkDelete] Clic sur bouton supprimer organisations');
+        var selected = $('.org-checkbox:checked').map(function() { return this.value; }).get();
+        console.log('[BulkDelete] Organisations sélectionnées pour suppression:', selected.length, selected);
+        if (selected.length === 0) {
+          console.warn('[BulkDelete] Aucune organisation sélectionnée, arrêt');
+          return;
+        }
+        
+        // Message de confirmation avec avertissement sur la suppression des datasets
+        var confirmMsg = i18n.confirmDeleteOrgs + ' ' + selected.length + ' ' + i18n.organizations + '?\n\n';
+        confirmMsg += 'ATTENTION: Tous les datasets de ces organisations seront également supprimés.\n';
+        confirmMsg += 'Cette action est irréversible.';
+        
+        if (!confirm(confirmMsg)) {
+          return;
+        }
+        
+        // Désactiver le bouton pendant le traitement
+        var $btn = $(this);
+        $btn.prop('disabled', true);
+        $btn.html('<i class="fa fa-spinner fa-spin"></i> Suppression en cours...');
+        
+        $.ajax({
+          url: '/api/action/admin_bulk_delete_organizations',
+          method: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({organization_ids: selected}),
+          success: function(data) {
+            if (data.result && data.result.success) {
+              var successCount = data.result.deleted_count || 0;
+              var errorCount = data.result.failed_count || 0;
+              var datasetsDeleted = data.result.total_datasets_deleted || 0;
+              
+              var resultHtml = '<div class="alert alert-success">';
+              var successMsg = i18n.success || 'Suppression reussie';
+              var failuresMsg = i18n.failures || 'Echecs';
+              var orgsMsg = i18n.organizations || 'organisation(s)';
+              resultHtml += '<strong>' + successMsg + ':</strong> ' + successCount + ' ' + orgsMsg + ' supprimee(s)';
+              if (errorCount > 0) {
+                resultHtml += ' / <strong>' + failuresMsg + ':</strong> ' + errorCount;
+              }
+              if (datasetsDeleted > 0) {
+                resultHtml += '<br><strong>Datasets supprimés:</strong> ' + datasetsDeleted;
+              }
+              resultHtml += '</div>';
+              
+              $('#organizations-result').html(resultHtml);
+              loadOrganizations();
+              loadOrgSelect();
+            } else {
+              var errorMsg = i18n.error || 'Erreur';
+              var unknownErrorMsg = i18n.unknownError || 'Erreur inconnue';
+              $('#organizations-result').html('<div class="alert alert-danger">' + errorMsg + ': ' + (data.error || unknownErrorMsg) + '</div>');
+            }
+          },
+          error: function(xhr, status, error) {
+            console.error('[BulkDelete] Erreur AJAX suppression organisations:', xhr, status, error);
+            var errorMsg = error;
+            var errorDetails = '';
+            
+            // Essayer d'extraire le message d'erreur de la réponse
+            if (xhr.responseJSON && xhr.responseJSON.error) {
+              errorMsg = xhr.responseJSON.error.message || xhr.responseJSON.error.__type__ || errorMsg;
+              errorDetails = JSON.stringify(xhr.responseJSON.error, null, 2);
+            } else if (xhr.responseText) {
+              try {
+                var response = JSON.parse(xhr.responseText);
+                if (response.error) {
+                  errorMsg = response.error.message || response.error.__type__ || errorMsg;
+                  errorDetails = JSON.stringify(response.error, null, 2);
+                }
+              } catch (e) {
+                // Si ce n'est pas du JSON, utiliser le texte brut
+                errorDetails = xhr.responseText.substring(0, 500);
+              }
+            }
+            
+            var errorHtml = '<div class="alert alert-danger">';
+            errorHtml += '<strong>' + i18n.error + ':</strong> ' + errorMsg;
+            if (errorDetails) {
+              errorHtml += '<br><small><pre style="max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-wrap: break-word;">' + escapeHtml(errorDetails) + '</pre></small>';
+            }
+            errorHtml += '</div>';
+            
+            $('#organizations-result').html(errorHtml);
+          },
+          complete: function() {
+            // Réactiver le bouton
+            $btn.prop('disabled', false);
+            $btn.html('<i class="fa fa-trash"></i> {{ _("Supprimer les organisations sélectionnées")|tojson }}');
+          }
+        });
+      });
+      
+      // Supprimer les membres (délégation d'événements pour s'assurer que ça fonctionne)
+      $(document).on('click', '#delete-members-btn', function() {
+        console.log('[BulkDelete] Clic sur bouton supprimer membres');
+        var orgId = $('#org-select').val();
+        var selected = $('.member-checkbox:checked').map(function() { return this.value; }).get();
+        console.log('[BulkDelete] Membres sélectionnés pour suppression:', selected.length, selected, 'orgId:', orgId);
+        if (selected.length === 0 || !orgId) {
+          console.warn('[BulkDelete] Aucun membre sélectionné ou organisation manquante, arrêt');
+          return;
+        }
+        
+        if (!confirm(i18n.confirmDeleteMembers + ' ' + selected.length + ' ' + i18n.members + '?')) {
+          return;
+        }
+        
+        $.ajax({
+          url: '/api/action/admin_bulk_delete_members',
+          method: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({organization_id: orgId, member_ids: selected}),
+          success: function(data) {
+            if (data.result && data.result.success) {
+              var successCount = data.result.deleted_count || 0;
+              var errorCount = data.result.failed_count || 0;
+              $('#members-result').html(
+                '<div class="alert alert-success">' +
+                (i18n.success || 'Suppression reussie') + ': ' + successCount + 
+                ' / ' + (i18n.failures || 'Echecs') + ': ' + errorCount +
+                '</div>'
+              );
+              loadMembers(orgId);
+            } else {
+              var errorMsg = i18n.error || 'Erreur';
+              var unknownErrorMsg = i18n.unknownError || 'Erreur inconnue';
+              $('#members-result').html('<div class="alert alert-danger">' + errorMsg + ': ' + (data.error || unknownErrorMsg) + '</div>');
+            }
+          }
+        });
+      });
+      
+        // Fonction pour s'assurer que Bootstrap tabs est initialisé et que le tab actif est visible
+        function ensureTabVisible() {
+          var $tabPane = $('#organizations');
+          if ($tabPane.length === 0) {
+            return false;
+          }
+          
+          // Vérifier si le tab-pane est actif
+          var isActive = $tabPane.hasClass('active');
+          
+          // Si le tab n'est pas actif, activer le premier tab (organizations)
+          if (!isActive) {
+            var $firstTab = $('a[href="#organizations"]');
+            if ($firstTab.length > 0 && typeof $.fn.tab !== 'undefined') {
+              $firstTab.tab('show');
+              setTimeout(function() {
+                $tabPane.addClass('active');
+              }, 50);
+            } else {
+              $tabPane.addClass('active');
+            }
+          }
+          
+          // Cacher tous les autres tab-panes
+          $('.tab-pane').not('#organizations').removeClass('active').each(function() {
+            $(this).css('display', 'none');
+          });
+          
+          // Forcer la visibilité du tab-pane actif avec !important
+          if ($tabPane[0]) {
+            $tabPane[0].style.setProperty('display', 'block', 'important');
+            $tabPane[0].style.setProperty('visibility', 'visible', 'important');
+            $tabPane[0].style.setProperty('opacity', '1', 'important');
+          }
+          
+          // Vérifier et forcer la visibilité des parents (tab-content, admin-tabs, etc.)
+          var $parent = $tabPane.parent();
+          while ($parent.length > 0 && !$parent.is('body')) {
+            var parentDisplay = window.getComputedStyle($parent[0]).display;
+            var parentVisibility = window.getComputedStyle($parent[0]).visibility;
+            if (parentDisplay === 'none' || parentVisibility === 'hidden' || $parent[0].offsetWidth === 0) {
+              console.log('[BulkDelete] Parent caché détecté:', $parent[0].tagName, $parent[0].className, 'display:', parentDisplay);
+              $parent[0].style.setProperty('display', 'block', 'important');
+              $parent[0].style.setProperty('visibility', 'visible', 'important');
+            }
+            $parent = $parent.parent();
+          }
+          
+          // Retourner true si le tab est actif
+          return isActive;
+        }
+        
+        // Charger les données au chargement de la page
+        console.log('[BulkDelete] Chargement des données initiales...');
+        console.log('[BulkDelete] Élément datasets-list existe?', $('#datasets-list').length > 0);
+        console.log('[BulkDelete] Élément organizations-list existe?', $('#organizations-list').length > 0);
+        console.log('[BulkDelete] Élément tab-pane datasets existe?', $('#datasets').length > 0);
+        
+        // Attendre que Bootstrap soit prêt et forcer la visibilité du tab
+        var loadingAttempts = 0;
+        var maxLoadingAttempts = 10;
+        
+        function startLoading() {
+          loadingAttempts++;
+          
+          // Vérifier que Bootstrap tabs est disponible
+          if (typeof $.fn.tab === 'undefined') {
+            if (loadingAttempts < maxLoadingAttempts) {
+              console.log('[BulkDelete] Bootstrap tabs non disponible, attente... (' + loadingAttempts + '/' + maxLoadingAttempts + ')');
+              setTimeout(startLoading, 100);
+            } else {
+              console.warn('[BulkDelete] Bootstrap tabs non disponible après ' + maxLoadingAttempts + ' tentatives, chargement quand même...');
+              // Charger quand même, le contenu sera là quand l'utilisateur cliquera sur le tab
+              loadOrganizations();
+              loadOrgSelect();
+              loadDatasets();
+            }
+            return;
+          }
+          
+          // S'assurer que le tab est visible
+          var tabVisible = ensureTabVisible();
+          
+          // Si le tab n'est pas visible après plusieurs tentatives, charger quand même
+          // Le contenu sera injecté et sera visible quand l'utilisateur cliquera sur le tab
+          if (!tabVisible) {
+            if (loadingAttempts < maxLoadingAttempts) {
+              console.log('[BulkDelete] Tab non visible, nouvelle tentative... (' + loadingAttempts + '/' + maxLoadingAttempts + ')');
+              setTimeout(startLoading, 100);
+              return;
+            } else {
+              console.warn('[BulkDelete] Tab non visible après ' + maxLoadingAttempts + ' tentatives, chargement quand même...');
+              console.warn('[BulkDelete] Le contenu sera disponible quand vous cliquerez sur l\'onglet Organisations');
+            }
+          }
+          
+          console.log('[BulkDelete] Démarrage du chargement après initialisation Bootstrap...');
+          
+          // Charger les organisations (tab actif par défaut)
+          loadOrganizations();
+          loadOrgSelect();
+          
+          // Charger les datasets en arrière-plan (sera visible quand l'utilisateur clique sur le tab)
+          // Ne pas forcer la visibilité ici car le tab n'est pas actif
+          setTimeout(function() {
+            console.log('[BulkDelete] Chargement datasets en arrière-plan...');
+            loadDatasets();
+          }, 500);
+          
+          // Charger les membres quand une organisation est sélectionnée (délégation d'événements)
+          $(document).off('change', '#org-select').on('change', '#org-select', function() {
+            var orgId = $(this).val();
+            console.log('[BulkDelete] Organisation sélectionnée pour membres:', orgId);
+            loadMembers(orgId);
+          });
+          
+          // Vérifier périodiquement que le contenu est toujours là (debug)
+          var lastHtmlLength = 0;
+          var checkCount = 0;
+          var maxChecks = 5; // Vérifier seulement 5 fois (10 secondes max)
+          
+          var checkInterval = setInterval(function() {
+            checkCount++;
+            
+            var $list = $('#datasets-list');
+            if ($list.length === 0) {
+              console.warn('[BulkDelete] Élément datasets-list a disparu!');
+              clearInterval(checkInterval);
+              return;
+            }
+            var currentHtml = $list.html();
+            var currentLength = currentHtml.length;
+            if (currentLength === 0) {
+              console.warn('[BulkDelete] datasets-list est vide!');
+            } else if (lastHtmlLength > 0 && currentLength < lastHtmlLength / 2) {
+              console.warn('[BulkDelete] Contenu datasets-list a été réduit! Avant: ' + lastHtmlLength + ', Maintenant: ' + currentLength);
+              console.warn('[BulkDelete] Contenu actuel:', currentHtml.substring(0, 200));
+            }
+            lastHtmlLength = currentLength;
+            
+            // Arrêter après maxChecks vérifications
+            if (checkCount >= maxChecks) {
+              console.log('[BulkDelete] Arrêt de la surveillance périodique (contenu stable)');
+              clearInterval(checkInterval);
+            }
+          }, 2000);
+          
+          // Écouter les clics sur les onglets AVANT que Bootstrap ne gère le changement
+          $(document).off('click', 'a[data-toggle="tab"]').on('click', 'a[data-toggle="tab"]', function (e) {
+            var target = $(this).attr('href');
+            console.log('[BulkDelete] Clic sur tab:', target);
+            
+            // Forcer la visibilité IMMÉDIATEMENT avant que Bootstrap ne gère le changement
+            var $targetPane = $(target);
+            if ($targetPane.length > 0) {
+              // Cacher tous les autres panes d'abord
+              $('.tab-pane').not(target).removeClass('active').each(function() {
+                this.style.setProperty('display', 'none', 'important');
+              });
+              
+              // Forcer la visibilité du pane cible AVANT que Bootstrap ne le fasse
+              $targetPane.addClass('active');
+              ensureTabPaneVisible($targetPane);
+              
+              console.log('[BulkDelete] Visibilité forcée pour', target);
+            }
+          });
+          
+          // Écouter les changements de tab Bootstrap APRÈS que Bootstrap ait géré le changement
+          $(document).off('shown.bs.tab', 'a[data-toggle="tab"]').on('shown.bs.tab', 'a[data-toggle="tab"]', function (e) {
+            var target = $(e.target).attr('href');
+            console.log('[BulkDelete] Tab changé vers:', target);
+            
+            // Forcer la visibilité du tab-pane actif avec la fonction dédiée
+            var $targetPane = $(target);
+            if ($targetPane.length > 0) {
+              // Forcer la visibilité IMMÉDIATEMENT
+              ensureTabPaneVisible($targetPane);
+              
+              // S'assurer que le tab-pane a la classe active
+              $targetPane.addClass('active');
+              
+              // Cacher les autres tab-panes
+              $('.tab-pane').not(target).removeClass('active').each(function() {
+                this.style.setProperty('display', 'none', 'important');
+              });
+              
+              // Vérifier la visibilité après un court délai
+              setTimeout(function() {
+                var isVisible = $targetPane.is(':visible');
+                var offsetWidth = $targetPane[0] ? $targetPane[0].offsetWidth : 0;
+                console.log('[BulkDelete] Vérification visibilité tab', target, '- visible:', isVisible, 'width:', offsetWidth);
+                if (!isVisible || offsetWidth === 0) {
+                  console.warn('[BulkDelete] Tab-pane toujours invisible, nouvelle tentative...');
+                  ensureTabPaneVisible($targetPane);
+                  
+                  // Nouvelle tentative après un délai supplémentaire
+                  setTimeout(function() {
+                    ensureTabPaneVisible($targetPane);
+                    var isVisible2 = $targetPane.is(':visible');
+                    var offsetWidth2 = $targetPane[0] ? $targetPane[0].offsetWidth : 0;
+                    console.log('[BulkDelete] Vérification après nouvelle tentative - visible:', isVisible2, 'width:', offsetWidth2);
+                  }, 100);
+                }
+              }, 50);
+            }
+            
+            // Charger le contenu si nécessaire selon le tab
+            setTimeout(function() {
+              if (target === '#organizations') {
+                var htmlLength = $('#organizations-list').html().length;
+                if (htmlLength < 100) {
+                  console.log('[BulkDelete] Contenu organisations vide, rechargement...');
+                  loadOrganizations();
+                } else {
+                  // Forcer la visibilité même si le contenu existe déjà
+                  ensureTabPaneVisible($('#organizations'));
+                  console.log('[BulkDelete] Contenu organisations déjà chargé, forçage visibilité...');
+                  
+                  // Réattacher les gestionnaires d'événements avec délégation
+                  setTimeout(function() {
+                    var $orgsContainer = $('#organizations-container');
+                    if ($orgsContainer.length > 0) {
+                      $orgsContainer.off('change', '.org-checkbox').on('change', '.org-checkbox', function() {
+                        console.log('[BulkDelete] Checkbox organisation changée:', this.value, this.checked);
+                        updateDeleteButton('organizations');
+                      });
+                    }
+                  }, 200);
+                }
+              } else if (target === '#datasets') {
+                // Forcer la visibilité AVANT de charger le contenu
+                ensureTabPaneVisible($('#datasets'));
+                
+                var htmlLength = $('#datasets-list').html().length;
+                console.log('[BulkDelete] Longueur HTML datasets:', htmlLength);
+                if (htmlLength < 100) {
+                  console.log('[BulkDelete] Contenu datasets vide, rechargement...');
+                  loadDatasets();
+                } else {
+                  // Forcer la visibilité même si le contenu existe déjà
+                  ensureTabPaneVisible($('#datasets'));
+                  console.log('[BulkDelete] Contenu datasets déjà chargé, forçage visibilité...');
+                  
+                  // Vérifier que le contenu est bien visible après un court délai
+                  setTimeout(function() {
+                    var $datasetsList = $('#datasets-list');
+                    var $tabPane = $('#datasets');
+                    var isVisible = $datasetsList.is(':visible');
+                    var offsetWidth = $datasetsList.length > 0 ? $datasetsList[0].offsetWidth : 0;
+                    var tabActive = $tabPane.hasClass('active');
+                    console.log('[BulkDelete] Vérification datasets-list - visible:', isVisible, 'width:', offsetWidth, 'tabActive:', tabActive);
+                    if (!isVisible || offsetWidth === 0) {
+                      console.warn('[BulkDelete] datasets-list toujours invisible, nouvelle tentative...');
+                      ensureTabPaneVisible($('#datasets'));
+                    }
+                  }, 100);
+                }
+              } else if (target === '#members') {
+                // Forcer la visibilité IMMÉDIATEMENT
+                var $membersPane = $('#members');
+                ensureTabPaneVisible($membersPane);
+                
+                // Charger les organisations dans le select si nécessaire
+                var $orgSelect = $('#org-select');
+                if ($orgSelect.find('option').length <= 1) {
+                  console.log('[BulkDelete] Chargement organisations pour select...');
+                  loadOrgSelect();
+                }
+                
+                var orgId = $orgSelect.val();
+                var $membersList = $('#members-list');
+                var htmlLength = $membersList.html().length;
+                console.log('[BulkDelete] Longueur HTML membres:', htmlLength, 'orgId:', orgId);
+                
+                if (orgId && htmlLength < 100) {
+                  console.log('[BulkDelete] Contenu membres vide, chargement...');
+                  loadMembers(orgId);
+                } else if (!orgId) {
+                  // Aucune organisation sélectionnée, afficher le message
+                  if (htmlLength < 100) {
+                    $membersList.html('<p class="text-muted">' + i18n.selectOrgFirst + '</p>');
+                  }
+                  ensureTabPaneVisible($membersPane);
+                  
+                  // Forcer la visibilité du contenu
+                  $membersList.css({
+                    'display': 'block',
+                    'visibility': 'visible',
+                    'opacity': '1'
+                  });
+                } else {
+                  // Le contenu existe déjà, forcer la visibilité
+                  console.log('[BulkDelete] Contenu membres déjà chargé, forçage visibilité...');
+                  ensureTabPaneVisible($membersPane);
+                  
+                  // Forcer aussi la visibilité du contenu interne
+                  $membersList.css({
+                    'display': 'block',
+                    'visibility': 'visible',
+                    'opacity': '1'
+                  });
+                  
+                  // Vérifier la visibilité après un court délai
+                  setTimeout(function() {
+                    var isVisible = $membersList.is(':visible');
+                    var offsetWidth = $membersList.length > 0 ? $membersList[0].offsetWidth : 0;
+                    var tabActive = $membersPane.hasClass('active');
+                    console.log('[BulkDelete] Vérification members-list - visible:', isVisible, 'width:', offsetWidth, 'tabActive:', tabActive);
+                    if (!isVisible || offsetWidth === 0) {
+                      console.warn('[BulkDelete] members-list toujours invisible, nouvelle tentative...');
+                      ensureTabPaneVisible($membersPane);
+                      $membersList.css({
+                        'display': 'block !important',
+                        'visibility': 'visible !important',
+                        'opacity': '1 !important'
+                      });
+                    }
+                  }, 50);
+                  
+                  // Réattacher les gestionnaires d'événements avec délégation si des membres sont déjà chargés
+                  if (orgId && htmlLength >= 100) {
+                    setTimeout(function() {
+                      var $membersContainer = $('#members-container');
+                      if ($membersContainer.length > 0) {
+                        $membersContainer.off('change', '.member-checkbox').on('change', '.member-checkbox', function() {
+                          console.log('[BulkDelete] Checkbox membre changée:', this.value, this.checked);
+                          updateDeleteButton('members');
+                        });
+                      }
+                    }, 200);
+                  }
+                }
+              }
+            }, 100);
+          });
+          
+          console.log('[BulkDelete] Initialisation terminée');
+        }
+        
+        // Démarrer après un court délai pour laisser le DOM se stabiliser
+        setTimeout(startLoading, 300);
+      }
+      
+      // Initialiser quand le DOM est prêt
+      console.log('[BulkDelete] État du document:', document.readyState);
+      if (document.readyState === 'loading') {
+        console.log('[BulkDelete] Attente DOMContentLoaded...');
+        document.addEventListener('DOMContentLoaded', function() {
+          console.log('[BulkDelete] DOMContentLoaded déclenché');
+          initBulkDelete();
+        });
+      } else {
+        console.log('[BulkDelete] DOM déjà prêt, initialisation immédiate');
+        initBulkDelete();
+      }
+    })();
+  </script>
+{% endblock %}
+

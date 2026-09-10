@@ -1,0 +1,64 @@
+{# Template complet pour remplacer le template original de CKAN #}
+{# Le template original essaie de créer un lien avec entity.type + '.read' #}
+{# mais pour les fichiers supprimés (type='file'), cela donne 'file.read' qui n'existe pas #}
+{# Ce template remplace complètement le template original pour éviter l'erreur #}
+{# IMPORTANT: Ce template doit être dans ckanext-ogc/ckanext/ogc/templates/admin/snippets/data_type.html #}
+{# et l'extension ogc doit être chargée AVANT les autres extensions dans ckan.plugins #}
+
+{% if entities %}
+  <table class="table table-bordered">
+    <thead>
+      <tr>
+        <th>{{ _('Name') }}</th>
+        <th>{{ _('Type') }}</th>
+        <th>{{ _('Actions') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entity in entities %}
+        <tr>
+          <td>
+            {% set title = entity.title or entity.name %}
+            {% if entity.type == 'file' %}
+              {# Pour les fichiers (ressources supprimées), pas de lien car file.read n'existe pas #}
+              <strong>{{ title }}</strong>
+              <small class="text-muted">({{ _('Deleted resource') }})</small>
+            {% else %}
+              {# Pour les autres types, utiliser le helper sécurisé qui gère les erreurs #}
+              {% set entity_url = h.safe_entity_url(entity) if h.safe_entity_url else None %}
+              {% if entity_url %}
+                <a href="{{ entity_url }}" title="{{ title }}">
+                  {{ title }}
+                </a>
+              {% else %}
+                {# Si pas d'URL valide, afficher juste le titre #}
+                <strong>{{ title }}</strong>
+              {% endif %}
+            {% endif %}
+          </td>
+          <td>{{ entity.type }}</td>
+          <td>
+            {% if entity.type == 'file' %}
+              {# Pour les fichiers supprimés, pas d'action de restauration possible #}
+              <span class="text-muted">{{ _('Cannot restore deleted files') }}</span>
+            {% else %}
+              {# Pour les autres types, utiliser un formulaire POST vers admin.trash #}
+              {# CKAN gère la restauration via un formulaire POST vers admin.trash avec action=restore et id=entity.id #}
+              {# Le endpoint admin.trash accepte POST avec action=restore pour restaurer les éléments supprimés #}
+              <form method="post" action="{{ h.url_for('admin.trash') }}" style="display: inline-block;">
+                <input type="hidden" name="action" value="restore">
+                <input type="hidden" name="id" value="{{ entity.id }}">
+                <button type="submit" class="btn btn-default btn-sm" onclick="return confirm('{{ _('Are you sure you want to restore this item?') }}');">
+                  <i class="fa fa-undo"></i> {{ _('Restore') }}
+                </button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p>{{ _('No deleted items found.') }}</p>
+{% endif %}
+

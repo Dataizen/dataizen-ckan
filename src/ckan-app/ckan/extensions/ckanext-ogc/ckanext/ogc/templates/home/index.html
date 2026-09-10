@@ -1,0 +1,39 @@
+{% ckan_extends %}
+
+{# Home Dataizen : layout 2 colonnes équilibré (évite le vide à gauche du featured
+   par défaut). Colonne gauche : intro + statistiques + catégories. Colonne droite :
+   recherche + organisation mise en avant (referentiels) + tags. Pas de placeholder. #}
+{% block primary_content %}
+<div role="main">
+  <div class="container">
+    <div class="row">
+      <div class="col-md-7 col-sm-12">
+        {% if g.site_intro_text %}
+          <div class="module module-shallow box dtz-home-intro">
+            <div class="module-content">{{ h.render_markdown(g.site_intro_text) }}</div>
+          </div>
+        {% endif %}
+        {% block statistics_section %}
+          {% snippet 'snippets/home_statistics.html' %}
+        {% endblock %}
+      </div>
+      <div class="col-md-5 col-sm-12">
+        {% block search %}
+          {% snippet 'home/snippets/search.html', search_facets=search_facets %}
+        {% endblock %}
+        {% block featured_organization %}
+          {% snippet 'home/snippets/featured_organization.html' %}
+        {% endblock %}
+      </div>
+    </div>
+    <div class="dtz-home-sections">
+      {% block categories_section %}
+        {% snippet 'snippets/home_categories.html' %}
+      {% endblock %}
+      {% block tags_section %}
+        {% snippet 'snippets/popular_tags.html' %}
+      {% endblock %}
+    </div>
+  </div>
+</div>
+{% endblock %}

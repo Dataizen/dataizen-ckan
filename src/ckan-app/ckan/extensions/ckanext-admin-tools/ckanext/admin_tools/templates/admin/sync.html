@@ -1,0 +1,642 @@
+{% extends "admin/base.html" %}
+
+{% block primary_content_inner %}
+  {% if page_csrf_token %}
+  <meta name="csrf-token" content="{{ page_csrf_token }}">
+  {% endif %}
+  <h1>{{ _('Synchronisations') }}</h1>
+  
+  <div class="panel panel-default" style="margin-top: 20px;">
+    <div class="panel-heading">
+      <h3 class="panel-title">{{ _('pygeoapi') }}</h3>
+    </div>
+    <div class="panel-body">
+      <p>{{ _('Synchronise les collections pygeoapi avec les datasets géospatiaux CKAN.') }}</p>
+      <p class="text-muted small">{{ _('Flux : découverte des datasets géospatiaux (package_search) → mise à jour de local.config.yml → régénération openapi.yml → redémarrage pygeoapi. Les logs intermédiaires apparaissent avec le préfixe [pygeoapi sync].') }}</p>
+      <button id="sync-pygeoapi-btn" class="btn btn-primary">
+        <i class="fa fa-sync"></i> {{ _('Lancer la synchronisation pygeoapi') }}
+      </button>
+      <div id="pygeoapi-result" style="margin-top: 15px;"></div>
+    </div>
+  </div>
+  
+  <div class="panel panel-default" style="margin-top: 20px;">
+    <div class="panel-heading">
+      <h3 class="panel-title">{{ _('MapServer') }}</h3>
+    </div>
+    <div class="panel-body">
+      <p>{{ _('Génère les mapfiles MapServer pour tous les datasets géospatiaux.') }}</p>
+      <button id="sync-mapserver-btn" class="btn btn-primary">
+        <i class="fa fa-sync"></i> {{ _('Lancer la synchronisation MapServer') }}
+      </button>
+      <div id="mapserver-result" style="margin-top: 15px;"></div>
+    </div>
+  </div>
+  
+  <div class="panel panel-default" style="margin-top: 20px;">
+    <div class="panel-heading">
+      <h3 class="panel-title">{{ _('Import Datagis') }}</h3>
+    </div>
+    <div class="panel-body">
+      <p>{{ _('Importe les fichiers géospatiaux (SHP, GeoJSON, GPKG) dans la base datagis.') }}</p>
+      <button id="sync-datagis-btn" class="btn btn-primary">
+        <i class="fa fa-sync"></i> {{ _('Lancer l\'import Datagis') }}
+      </button>
+      <div id="datagis-result" style="margin-top: 15px;"></div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      // Attendre que jQuery soit disponible
+      function initSync() {
+        if (typeof jQuery === 'undefined') {
+          setTimeout(initSync, 100);
+          return;
+        }
+        var $ = jQuery;
+        
+        // Envoyer le token CSRF sur tous les POST (évite 400 "CSRF token is missing" sur api/action)
+        var csrftoken = $('meta[name="csrf-token"]').attr('content');
+        if (csrftoken) {
+          $.ajaxSetup({
+            beforeSend: function(xhr, settings) {
+              if (!/^(GET|HEAD|OPTIONS|TRACE)$/i.test(settings.type)) {
+                xhr.setRequestHeader('X-CSRFToken', csrftoken);
+              }
+            }
+          });
+        }
+        
+        // Synchronisation pygeoapi
+        var pygeoapiJobId = null;
+        var pygeoapiPollInterval = null;
+        
+        // Récupérer le job_id depuis localStorage au chargement
+        function loadPygeoapiJobId() {
+          var stored = localStorage.getItem('pygeoapi_job_id');
+          if (stored) {
+            pygeoapiJobId = stored;
+            // Vérifier si le job est toujours en cours
+            pollPygeoapiStatus(stored);
+            // Reprendre le polling
+            pygeoapiPollInterval = setInterval(function() {
+              pollPygeoapiStatus(stored);
+            }, 3000);
+            $('#sync-pygeoapi-btn').prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i> {{ _("Synchronisation en cours...") }}');
+          }
+        }
+        
+        // Sauvegarder le job_id dans localStorage
+        function savePygeoapiJobId(jobId) {
+          if (jobId) {
+            localStorage.setItem('pygeoapi_job_id', jobId);
+          } else {
+            localStorage.removeItem('pygeoapi_job_id');
+          }
+        }
+        
+        function pollPygeoapiStatus(jobId) {
+          $.ajax({
+            url: '/api/action/admin_sync_pygeoapi_status',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({job_id: jobId}),
+            success: function(response) {
+              // Les réponses de l'API CKAN sont dans response.result
+              var data = response.result || response;
+              
+              if (data && data.success) {
+                var status = data.status || 'unknown';
+                var message = data.message || '{{ _("Synchronisation en cours...") }}';
+                
+                if (status === 'finished') {
+                  // Arrêter le polling
+                  if (pygeoapiPollInterval) {
+                    clearInterval(pygeoapiPollInterval);
+                    pygeoapiPollInterval = null;
+                  }
+                  pygeoapiJobId = null;
+                  savePygeoapiJobId(null); // Nettoyer localStorage
+                  
+                  // Réactiver le bouton
+                  $('#sync-pygeoapi-btn').prop('disabled', false).html('<i class="fa fa-sync"></i> {{ _("Lancer la synchronisation pygeoapi") }}');
+                  
+                  // Afficher le résultat
+                  $('#pygeoapi-result').html(
+                    '<div class="alert alert-success">' +
+                    '<i class="fa fa-check"></i> ' + message +
+                    '</div>'
+                  );
+                } else if (status === 'failed') {
+                  // Arrêter le polling
+                  if (pygeoapiPollInterval) {
+                    clearInterval(pygeoapiPollInterval);
+                    pygeoapiPollInterval = null;
+                  }
+                  pygeoapiJobId = null;
+                  savePygeoapiJobId(null); // Nettoyer localStorage
+                  
+                  // Réactiver le bouton
+                  $('#sync-pygeoapi-btn').prop('disabled', false).html('<i class="fa fa-sync"></i> {{ _("Lancer la synchronisation pygeoapi") }}');
+                  
+                  // Afficher l'erreur
+                  $('#pygeoapi-result').html(
+                    '<div class="alert alert-danger">' +
+                    '<i class="fa fa-exclamation-triangle"></i> {{ _("Erreur") }}: ' + (data.error || '{{ _("Erreur inconnue") }}') +
+                    '</div>'
+                  );
+                } else {
+                  // Mettre à jour le message de progression (avec barre si N/Total dispo)
+                  var icon = status === 'running' ? 'fa-spinner fa-spin' : 'fa-clock-o';
+                  var current = data.progress_current;
+                  var total = data.progress_total;
+                  var html = '<div class="alert alert-info">' +
+                    '<i class="fa ' + icon + '"></i> ' + message;
+                  if (typeof current === 'number' && typeof total === 'number' && total > 0) {
+                    var pct = Math.round(100 * current / total);
+                    html += ' <strong>' + current + '/' + total + ' {{ _("collections") }}</strong>' +
+                      '</div><div class="progress" style="margin-top: 8px;">' +
+                      '<div class="progress-bar progress-bar-info" role="progressbar" style="width: ' + pct + '%">' +
+                      current + '/' + total + '</div></div>';
+                  } else {
+                    html += ' <small>({{ _("Cette opération peut prendre plusieurs minutes") }})</small></div>';
+                  }
+                  $('#pygeoapi-result').html(html);
+                }
+              } else {
+                // Erreur lors de la récupération du statut
+                if (data && data.status === 'not_found') {
+                  // Job non trouvé, arrêter le polling
+                  if (pygeoapiPollInterval) {
+                    clearInterval(pygeoapiPollInterval);
+                    pygeoapiPollInterval = null;
+                  }
+                  pygeoapiJobId = null;
+                  savePygeoapiJobId(null); // Nettoyer localStorage
+                  $('#sync-pygeoapi-btn').prop('disabled', false).html('<i class="fa fa-sync"></i> {{ _("Lancer la synchronisation pygeoapi") }}');
+                  $('#pygeoapi-result').html(
+                    '<div class="alert alert-warning">' +
+                    '<i class="fa fa-exclamation-triangle"></i> {{ _("Job non trouvé") }}' +
+                    '</div>'
+                  );
+                } else if (response.error) {
+                  // Erreur de l'API CKAN
+                  console.error('Erreur API:', response.error);
+                  // Continuer à poller (peut être temporaire)
+                } else {
+                  // Format de réponse inattendu, continuer à poller
+                  console.log('Format de réponse inattendu, nouvelle tentative...');
+                }
+              }
+            },
+            error: function(xhr, status, error) {
+              // Erreur de communication, continuer à poller
+              console.log('Erreur lors de la récupération du statut, nouvelle tentative...');
+            }
+          });
+        }
+        
+        $('#sync-pygeoapi-btn').on('click', function() {
+          var btn = $(this);
+          btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i> {{ _("Lancement...") }}');
+          
+          // Afficher un message initial
+          $('#pygeoapi-result').html(
+            '<div class="alert alert-info">' +
+            '<i class="fa fa-spinner fa-spin"></i> {{ _("Soumission du job en cours...") }}' +
+            '</div>'
+          );
+          
+          $.ajax({
+            url: '/api/action/admin_sync_pygeoapi',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({}),
+            timeout: 30000, // 30 secondes pour la soumission
+            success: function(response) {
+              // Les réponses de l'API CKAN sont dans response.result
+              var data = response.result || response;
+              
+              if (response.error) {
+                // Erreur de l'API CKAN
+                btn.prop('disabled', false).html('<i class="fa fa-sync"></i> {{ _("Lancer la synchronisation pygeoapi") }}');
+                $('#pygeoapi-result').html(
+                  '<div class="alert alert-danger">' +
+                  '<i class="fa fa-exclamation-triangle"></i> {{ _("Erreur") }}: ' + (response.error.message || response.error || '{{ _("Erreur inconnue") }}') +
+                  '</div>'
+                );
+              } else if (data && data.success && data.job_id) {
+                pygeoapiJobId = data.job_id;
+                savePygeoapiJobId(data.job_id); // Sauvegarder dans localStorage
+                
+                // Démarrer le polling toutes les 3 secondes
+                pygeoapiPollInterval = setInterval(function() {
+                  pollPygeoapiStatus(pygeoapiJobId);
+                }, 3000);
+                
+                // Premier poll immédiat
+                pollPygeoapiStatus(pygeoapiJobId);
+                
+                btn.html('<i class="fa fa-spinner fa-spin"></i> {{ _("Synchronisation en cours...") }}');
+              } else {
+                btn.prop('disabled', false).html('<i class="fa fa-sync"></i> {{ _("Lancer la synchronisation pygeoapi") }}');
+                var errorMsg = (data && data.error) || '{{ _("Erreur inconnue") }}';
+                $('#pygeoapi-result').html(
+                  '<div class="alert alert-danger">' +
+                  '<i class="fa fa-exclamation-triangle"></i> {{ _("Erreur") }}: ' + errorMsg +
+                  '</div>'
+                );
+              }
+            },
+            error: function(xhr, status, error) {
+              btn.prop('disabled', false).html('<i class="fa fa-sync"></i> {{ _("Lancer la synchronisation pygeoapi") }}');
+              var errorMsg = '{{ _("Erreur de communication avec le serveur") }}';
+              if (status === 'timeout') {
+                errorMsg = '{{ _("Timeout lors de la soumission du job") }}';
+              }
+              $('#pygeoapi-result').html(
+                '<div class="alert alert-danger">' +
+                '<i class="fa fa-exclamation-triangle"></i> ' + errorMsg +
+                '</div>'
+              );
+            }
+          });
+        });
+      
+      // Synchronisation MapServer
+      var mapserverJobId = null;
+      var mapserverPollInterval = null;
+      
+      function loadMapserverJobId() {
+        var stored = localStorage.getItem('mapserver_job_id');
+        if (stored) {
+          mapserverJobId = stored;
+          pollMapserverStatus(stored);
+          mapserverPollInterval = setInterval(function() {
+            pollMapserverStatus(stored);
+          }, 3000);
+          $('#sync-mapserver-btn').prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i> {{ _("Synchronisation en cours...") }}');
+        }
+      }
+      
+      function saveMapserverJobId(jobId) {
+        if (jobId) {
+          localStorage.setItem('mapserver_job_id', jobId);
+        } else {
+          localStorage.removeItem('mapserver_job_id');
+        }
+      }
+      
+      function pollMapserverStatus(jobId) {
+        $.ajax({
+          url: '/api/action/admin_sync_mapserver_status',
+          method: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({job_id: jobId}),
+          success: function(response) {
+            var data = response.result || response;
+            
+            if (data && data.success) {
+              var status = data.status || 'unknown';
+              var message = data.message || '{{ _("Synchronisation en cours...") }}';
+              
+              if (status === 'finished') {
+                if (mapserverPollInterval) {
+                  clearInterval(mapserverPollInterval);
+                  mapserverPollInterval = null;
+                }
+                mapserverJobId = null;
+                saveMapserverJobId(null);
+                
+                $('#sync-mapserver-btn').prop('disabled', false).html('<i class="fa fa-sync"></i> {{ _("Lancer la synchronisation MapServer") }}');
+                
+                var output = data.output ? '<pre style="max-height: 200px; overflow-y: auto;">' + data.output + '</pre>' : '';
+                $('#mapserver-result').html(
+                  '<div class="alert alert-success">' +
+                  '<i class="fa fa-check"></i> ' + message +
+                  '</div>' + output
+                );
+              } else if (status === 'failed') {
+                if (mapserverPollInterval) {
+                  clearInterval(mapserverPollInterval);
+                  mapserverPollInterval = null;
+                }
+                mapserverJobId = null;
+                saveMapserverJobId(null);
+                
+                $('#sync-mapserver-btn').prop('disabled', false).html('<i class="fa fa-sync"></i> {{ _("Lancer la synchronisation MapServer") }}');
+                $('#mapserver-result').html(
+                  '<div class="alert alert-danger">' +
+                  '<i class="fa fa-exclamation-triangle"></i> {{ _("Erreur") }}: ' + (data.error || '{{ _("Erreur inconnue") }}') +
+                  '</div>'
+                );
+              } else {
+                var icon = status === 'running' ? 'fa-spinner fa-spin' : 'fa-clock-o';
+                var current = data.progress_current;
+                var total = data.progress_total;
+                var html = '<div class="alert alert-info">' +
+                  '<i class="fa ' + icon + '"></i> ' + message;
+                if (typeof current === 'number' && typeof total === 'number' && total > 0) {
+                  var pct = Math.round(100 * current / total);
+                  html += ' <strong>' + current + '/' + total + ' {{ _("mapfiles") }}</strong>' +
+                    '</div><div class="progress" style="margin-top: 8px;">' +
+                    '<div class="progress-bar progress-bar-info" role="progressbar" style="width: ' + pct + '%">' +
+                    current + '/' + total + '</div></div>';
+                } else {
+                  html += ' <small>({{ _("Cette opération peut prendre plusieurs minutes") }})</small></div>';
+                }
+                $('#mapserver-result').html(html);
+              }
+            } else if (data && data.status === 'not_found') {
+              if (mapserverPollInterval) {
+                clearInterval(mapserverPollInterval);
+                mapserverPollInterval = null;
+              }
+              mapserverJobId = null;
+              $('#sync-mapserver-btn').prop('disabled', false).html('<i class="fa fa-sync"></i> {{ _("Lancer la synchronisation MapServer") }}');
+            }
+          },
+          error: function() {
+            console.log('Erreur lors de la récupération du statut MapServer, nouvelle tentative...');
+          }
+        });
+      }
+      
+      $('#sync-mapserver-btn').on('click', function() {
+        var btn = $(this);
+        btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i> {{ _("Lancement...") }}');
+        
+        $('#mapserver-result').html(
+          '<div class="alert alert-info">' +
+          '<i class="fa fa-spinner fa-spin"></i> {{ _("Soumission du job en cours...") }}' +
+          '</div>'
+        );
+        
+        $.ajax({
+          url: '/api/action/admin_sync_mapserver',
+          method: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({}),
+          timeout: 30000,
+          success: function(response) {
+            var data = response.result || response;
+            
+            if (response.error) {
+              btn.prop('disabled', false).html('<i class="fa fa-sync"></i> {{ _("Lancer la synchronisation MapServer") }}');
+              $('#mapserver-result').html(
+                '<div class="alert alert-danger">' +
+                '<i class="fa fa-exclamation-triangle"></i> {{ _("Erreur") }}: ' + (response.error.message || response.error || '{{ _("Erreur inconnue") }}') +
+                '</div>'
+              );
+            } else if (data && data.success && data.job_id) {
+              mapserverJobId = data.job_id;
+              saveMapserverJobId(data.job_id);
+              
+              mapserverPollInterval = setInterval(function() {
+                pollMapserverStatus(mapserverJobId);
+              }, 3000);
+              
+              pollMapserverStatus(mapserverJobId);
+              
+              btn.html('<i class="fa fa-spinner fa-spin"></i> {{ _("Synchronisation en cours...") }}');
+            } else {
+              btn.prop('disabled', false).html('<i class="fa fa-sync"></i> {{ _("Lancer la synchronisation MapServer") }}');
+              var errorMsg = (data && data.error) || '{{ _("Erreur inconnue") }}';
+              $('#mapserver-result').html(
+                '<div class="alert alert-danger">' +
+                '<i class="fa fa-exclamation-triangle"></i> {{ _("Erreur") }}: ' + errorMsg +
+                '</div>'
+              );
+            }
+          },
+          error: function(xhr, status, error) {
+            btn.prop('disabled', false).html('<i class="fa fa-sync"></i> {{ _("Lancer la synchronisation MapServer") }}');
+            var errorMsg = '{{ _("Erreur de communication avec le serveur") }}';
+            if (status === 'timeout') {
+              errorMsg = '{{ _("Timeout lors de la soumission du job") }}';
+            }
+            $('#mapserver-result').html(
+              '<div class="alert alert-danger">' +
+              '<i class="fa fa-exclamation-triangle"></i> ' + errorMsg +
+              '</div>'
+            );
+          }
+        });
+      });
+      
+      // Synchronisation Datagis
+      var datagisJobId = null;
+      var datagisPollInterval = null;
+      var datagisBtnText = {{ _("Lancer l'import Datagis")|tojson }};
+      
+      function loadDatagisJobId() {
+        var stored = localStorage.getItem('datagis_job_id');
+        if (stored) {
+          datagisJobId = stored;
+          pollDatagisStatus(stored);
+          datagisPollInterval = setInterval(function() {
+            pollDatagisStatus(stored);
+          }, 3000);
+          $('#sync-datagis-btn').prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i> {{ _("Import en cours...") }}');
+        }
+      }
+      
+      function saveDatagisJobId(jobId) {
+        if (jobId) {
+          localStorage.setItem('datagis_job_id', jobId);
+        } else {
+          localStorage.removeItem('datagis_job_id');
+        }
+      }
+      
+      function pollDatagisStatus(jobId) {
+        var useFormData = false;
+        function doPoll() {
+          var opts = {
+            url: '/api/action/admin_sync_datagis_status',
+            method: 'POST',
+            dataType: 'json',
+            success: function(response) {
+              var data = response.result || response;
+              
+              if (data && data.success) {
+                var status = data.status || 'unknown';
+                var message = data.message || '{{ _("Import en cours...") }}';
+                
+                if (status === 'finished') {
+                  if (datagisPollInterval) {
+                    clearInterval(datagisPollInterval);
+                    datagisPollInterval = null;
+                  }
+                  datagisJobId = null;
+                  saveDatagisJobId(null);
+                  
+                  $('#sync-datagis-btn').prop('disabled', false).html('<i class="fa fa-sync"></i> ' + datagisBtnText);
+                  
+                  var output = data.output ? '<pre style="max-height: 200px; overflow-y: auto;">' + data.output + '</pre>' : '';
+                  $('#datagis-result').html(
+                    '<div class="alert alert-success">' +
+                    '<i class="fa fa-check"></i> ' + message +
+                    '</div>' + output
+                  );
+                } else if (status === 'failed') {
+                  if (datagisPollInterval) {
+                    clearInterval(datagisPollInterval);
+                    datagisPollInterval = null;
+                  }
+                  datagisJobId = null;
+                  saveDatagisJobId(null);
+                  
+                  $('#sync-datagis-btn').prop('disabled', false).html('<i class="fa fa-sync"></i> ' + datagisBtnText);
+                  $('#datagis-result').html(
+                    '<div class="alert alert-danger">' +
+                    '<i class="fa fa-exclamation-triangle"></i> {{ _("Erreur") }}: ' + (data.error || '{{ _("Erreur inconnue") }}') +
+                    '</div>'
+                  );
+                } else {
+                  var icon = status === 'running' ? 'fa-spinner fa-spin' : 'fa-clock-o';
+                  var current = data.progress_current;
+                  var total = data.progress_total;
+                  if (typeof current !== 'number' && current != null) current = parseInt(current, 10);
+                  if (typeof total !== 'number' && total != null) total = parseInt(total, 10);
+                  var html = '<div class="alert alert-info">' +
+                    '<i class="fa ' + icon + '"></i> ' + message;
+                  if (typeof current === 'number' && !isNaN(current) && typeof total === 'number' && !isNaN(total) && total > 0) {
+                    var pct = Math.round(100 * current / total);
+                    html += ' <strong>' + current + '/' + total + ' {{ _("fichiers") }}</strong>' +
+                      '</div><div class="progress" style="margin-top: 8px;">' +
+                      '<div class="progress-bar progress-bar-info" role="progressbar" style="width: ' + pct + '%" aria-valuenow="' + current + '" aria-valuemin="0" aria-valuemax="' + total + '">' +
+                      current + '/' + total + '</div></div>';
+                  } else {
+                    html += ' <small>({{ _("Cette opération peut prendre plusieurs minutes") }})</small></div>';
+                  }
+                  $('#datagis-result').html(html);
+                }
+              } else if (data && (data.status === 'not_found' || data.error === 'job_id requis')) {
+                if (datagisPollInterval) {
+                  clearInterval(datagisPollInterval);
+                  datagisPollInterval = null;
+                }
+                datagisJobId = null;
+                saveDatagisJobId(null);
+                $('#sync-datagis-btn').prop('disabled', false).html('<i class="fa fa-sync"></i> ' + datagisBtnText);
+              }
+            },
+            error: function(xhr, status, err) {
+              if (xhr.status === 400 && !useFormData) {
+                useFormData = true;
+                doPoll();
+                return;
+              }
+              if (xhr.status === 400 || xhr.status === 403) {
+                var msg = '';
+                try {
+                  var r = xhr.responseJSON || (typeof xhr.responseText === 'string' && xhr.responseText.length ? JSON.parse(xhr.responseText) : null);
+                  if (r && (r.error || r.result)) {
+                    var e = r.error || (r.result && r.result.error);
+                    msg = (typeof e === 'string' ? e : (e && e.message) ? e.message : JSON.stringify(e));
+                  }
+                } catch (e) {}
+                if (!msg) msg = xhr.statusText || '{{ _("Erreur de communication") }}';
+                if (datagisPollInterval) {
+                  clearInterval(datagisPollInterval);
+                  datagisPollInterval = null;
+                }
+                datagisJobId = null;
+                saveDatagisJobId(null);
+                $('#sync-datagis-btn').prop('disabled', false).html('<i class="fa fa-sync"></i> ' + datagisBtnText);
+                $('#datagis-result').html('<div class="alert alert-warning"><i class="fa fa-exclamation-triangle"></i> {{ _("Statut indisponible") }}: ' + msg + '</div>');
+              }
+            }
+          };
+          if (useFormData) {
+            opts.contentType = 'application/x-www-form-urlencoded';
+            opts.data = { data: JSON.stringify({ job_id: jobId }) };
+          } else {
+            opts.contentType = 'application/json';
+            opts.data = JSON.stringify({ job_id: jobId });
+          }
+          $.ajax(opts);
+        }
+        doPoll();
+      }
+      
+      $('#sync-datagis-btn').on('click', function() {
+        var btn = $(this);
+        btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i> {{ _("Lancement...") }}');
+        
+        $('#datagis-result').html(
+          '<div class="alert alert-info">' +
+          '<i class="fa fa-spinner fa-spin"></i> {{ _("Soumission du job en cours...") }}' +
+          '</div>'
+        );
+        
+        $.ajax({
+          url: '/api/action/admin_sync_datagis',
+          method: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({}),
+          timeout: 30000,
+          success: function(response) {
+            var data = response.result || response;
+            
+            if (response.error) {
+              btn.prop('disabled', false).html('<i class="fa fa-sync"></i> ' + datagisBtnText);
+              $('#datagis-result').html(
+                '<div class="alert alert-danger">' +
+                '<i class="fa fa-exclamation-triangle"></i> {{ _("Erreur") }}: ' + (response.error.message || response.error || '{{ _("Erreur inconnue") }}') +
+                '</div>'
+              );
+            } else if (data && data.success && data.job_id) {
+              datagisJobId = data.job_id;
+              saveDatagisJobId(data.job_id);
+              
+              datagisPollInterval = setInterval(function() {
+                pollDatagisStatus(datagisJobId);
+              }, 3000);
+              
+              pollDatagisStatus(datagisJobId);
+              
+              btn.html('<i class="fa fa-spinner fa-spin"></i> {{ _("Import en cours...") }}');
+            } else {
+              btn.prop('disabled', false).html('<i class="fa fa-sync"></i> ' + datagisBtnText);
+              var errorMsg = (data && data.error) || '{{ _("Erreur inconnue") }}';
+              $('#datagis-result').html(
+                '<div class="alert alert-danger">' +
+                '<i class="fa fa-exclamation-triangle"></i> {{ _("Erreur") }}: ' + errorMsg +
+                '</div>'
+              );
+            }
+          },
+          error: function(xhr, status, error) {
+            btn.prop('disabled', false).html('<i class="fa fa-sync"></i> ' + datagisBtnText);
+            var errorMsg = '{{ _("Erreur de communication avec le serveur") }}';
+            if (status === 'timeout') {
+              errorMsg = '{{ _("Timeout lors de la soumission du job") }}';
+            }
+            $('#datagis-result').html(
+              '<div class="alert alert-danger">' +
+              '<i class="fa fa-exclamation-triangle"></i> ' + errorMsg +
+              '</div>'
+            );
+          }
+        });
+      });
+      
+      // Charger les jobs en cours après initialisation
+      loadPygeoapiJobId();
+      loadMapserverJobId();
+      loadDatagisJobId();
+      } // Fin de la fonction initSync
+      
+      // Initialiser quand le DOM est prêt
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initSync);
+      } else {
+        initSync();
+      }
+    })();
+  </script>
+{% endblock %}
+
