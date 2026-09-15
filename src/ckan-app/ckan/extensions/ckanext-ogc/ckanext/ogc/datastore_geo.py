@@ -104,6 +104,28 @@ def drop_overview(resource_id):
     except Exception as e:
         log.warning("[geo] suppression de l'aperçu de %s échouée : %s", resource_id, e)
 
+
+def bbox_geojson(resource_id):
+    """GeoJSON (EPSG:4326) de l'emprise (rectangle englobant) de la géométrie de la ressource,
+    ou None si aucune géométrie. Sert à peupler l'extra `spatial` (recherche spatiale
+    ckanext-spatial + géométrie DCAT/GeoDCAT via le profil de base)."""
+    tbl = '"' + resource_id.replace('"', '""') + '"'
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT ST_AsGeoJSON(ST_SetSRID(ST_Extent({})::geometry, 4326)) FROM {};"
+                .format(GEOM_COL, tbl))
+            row = cur.fetchone()
+            return row[0] if row and row[0] else None
+    except Exception as e:
+        log.warning("[geo] emprise de %s échouée : %s", resource_id, e)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
 # Détection par nom (normalisé : espaces/underscores/casse ignorés).
 POINT_NAMES = {"geopoint", "geopoint2d", "point", "coordonnees", "coordinates", "position", "latlon", "latlong"}
 GEOM_NAMES = {"geoshape", "geoshape2d", "geometry", "geometrie", "geom", "thegeom", "wkt", "geojson", "shape", "contour"}

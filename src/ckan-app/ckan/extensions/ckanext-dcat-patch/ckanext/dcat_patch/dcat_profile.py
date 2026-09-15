@@ -37,7 +37,30 @@ AUTH = 'http://publications.europa.eu/resource/authority/'
 FREQ = AUTH + 'frequency/'
 LANG = AUTH + 'language/'
 ACCESS = AUTH + 'access-right/'
+THEME = AUTH + 'data-theme/'
 INSEE_DEP = 'http://id.insee.fr/geo/departement/'
+
+# Thématiques du portail (metadata.js) -> vocabulaire EU data-theme (une ou plusieurs)
+THEME_MAP = {
+    'Administration et action publique': ['GOVE'],
+    'Agriculture': ['AGRI'],
+    'Aménagement du territoire et urbanisme': ['REGI'],
+    'Biodiversité et eau': ['ENVI'],
+    'Citoyenneté et démocratie': ['GOVE'],
+    'Climat, air et énergie': ['ENVI', 'ENER'],
+    'Culture, patrimoine et tourisme': ['EDUC'],
+    'Economie et entreprises': ['ECON'],
+    'Equipements, bâtiments et logements': ['REGI'],
+    'Formation, éducation et emploi': ['EDUC'],
+    'Mobilité et transports': ['TRAN'],
+    'Nuisances, déchets et risques': ['ENVI'],
+    'Occupation des sols': ['ENVI'],
+    'Social, santé et sports': ['HEAL'],
+}
+# Formats considérés comme des fichiers téléchargeables (pour dcat:downloadURL)
+FILE_FORMATS = {'CSV', 'TSV', 'JSON', 'GEOJSON', 'XLSX', 'XLS', 'ODS', 'SHP', 'GPKG',
+                'PDF', 'ZIP', 'XML', 'PARQUET', 'GEOTIFF', 'TIFF', 'KML', 'GML',
+                'PMTILES', 'MBTILES', 'TXT', 'RDF', 'TTL', 'N3'}
 
 # Libellés du portail (metadata.js) -> codes des autorités EU
 FREQ_MAP = {
@@ -120,6 +143,28 @@ class DataizenValidityProfile(RDFProfile):
 
         # -- Droits d'accès : le flux ne contient que des jeux publics
         g.add((dataset_ref, DCT.accessRights, URIRef(ACCESS + 'PUBLIC')))
+
+        # -- Thématique -> URIs du vocabulaire EU data-theme (en plus du libellé du profil de base)
+        for code in THEME_MAP.get(val('theme'), []):
+            g.add((dataset_ref, DCAT.theme, URIRef(THEME + code)))
+
+        # -- downloadURL sur les distributions de fichiers (en plus de accessURL) : les
+        # distributions ont été ajoutées par le profil de base. On copie accessURL ->
+        # downloadURL pour les ressources téléchargeables (fichier déposé ou format fichier).
+        res_by_url = {}
+        for r in dataset_dict.get('resources', []):
+            u = (r.get('url') or '').strip()
+            if u:
+                res_by_url.setdefault(u, r)
+        for dist in list(g.objects(dataset_ref, DCAT.distribution)):
+            if list(g.objects(dist, DCAT.downloadURL)):
+                continue
+            for acc in g.objects(dist, DCAT.accessURL):
+                r = res_by_url.get(str(acc))
+                if r and (r.get('url_type') == 'upload'
+                          or (r.get('format') or '').upper() in FILE_FORMATS):
+                    g.add((dist, DCAT.downloadURL, acc))
+                break
 
         # -- Couverture spatiale : label libre + départements INSEE
         loc_label = val('couverture_spatiale')

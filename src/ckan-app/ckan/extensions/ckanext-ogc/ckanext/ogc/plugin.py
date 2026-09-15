@@ -63,6 +63,28 @@ def _geo_set_status(resource_id, status, **fields):
         log.warning("[geo] maj statut %s -> %s échec : %s", resource_id, status, e)
 
 
+def _geo_set_spatial(package_id, geojson):
+    """Pose l'extra `spatial` (emprise GeoJSON 4326) du JEU : indexé par ckanext-spatial
+    (recherche spatiale) et lu par le profil DCAT de base (géométrie / GeoDCAT). Idempotent :
+    ne patche que si la valeur change. Sans effet si pas de package ou pas de géométrie."""
+    if not package_id or not geojson:
+        return
+    try:
+        ctx = {'ignore_auth': True}
+        try:
+            ctx['user'] = get_action('get_site_user')(ctx, {}).get('name')
+        except Exception:
+            pass
+        pkg = get_action('package_show')(ctx, {'id': package_id})
+        extras = [e for e in (pkg.get('extras') or []) if e.get('key') != 'spatial']
+        if any(e.get('key') == 'spatial' and e.get('value') == geojson for e in (pkg.get('extras') or [])):
+            return  # déjà à jour
+        extras.append({'key': 'spatial', 'value': geojson})
+        get_action('package_patch')(ctx, {'id': package_id, 'extras': extras})
+    except Exception as e:
+        log.warning("[geo] extra spatial du jeu %s non posé : %s", package_id, e)
+
+
 def dtz_geo_process_job(resource_id, force=False):
     """Job RQ : pour une ressource datastore portant la géo EN COLONNE (Geo Shape/Geo Point/
     WKT/lat-lon), construit la géométrie PostGIS `_geom` (robuste, batché, en base) puis
@@ -100,6 +122,11 @@ def dtz_geo_process_job(resource_id, force=False):
             dg.build_overview(resource_id, gtype, total)
         except Exception as e:
             log.warning("[geo] aperçu non bâti pour %s : %s", resource_id, e)
+        # Emprise -> extra `spatial` du jeu (recherche spatiale + géométrie DCAT/GeoDCAT).
+        try:
+            _geo_set_spatial(res.get('package_id'), dg.bbox_geojson(resource_id))
+        except Exception as e:
+            log.warning("[geo] extra spatial non posé pour %s : %s", resource_id, e)
         try:
             pkg = get_action('package_show')(ctx, {'id': res.get('package_id')})
             try:
