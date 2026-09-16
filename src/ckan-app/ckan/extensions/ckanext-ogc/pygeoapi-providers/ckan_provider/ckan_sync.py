@@ -118,6 +118,11 @@ class CKANSync:
                         if progress_callback:
                             progress_callback(i + 1, total, f"{i + 1}/{total} packages analysés")
                     if self._is_geospatial_dataset(dataset):
+                        # Les jeux géo « en colonne » (géométrisés en colonne PostGIS `geometry`)
+                        # sont servis par MapServer (WMS/WFS) : leur collection pygeoapi feature
+                        # est cassée et lente. On ne les synchronise pas dans pygeoapi.
+                        if self._is_wms_served_geodataset(dataset):
+                            continue
                         geospatial_datasets.append(dataset)
                         logger.info(f"Dataset géospatial trouvé: {dataset.get('name', 'unnamed')}")
                 
@@ -159,6 +164,9 @@ class CKANSync:
                     logger.info(f"Checking package {i+1}/{len(package_names)}: {package_name}")
                     dataset = self._get_package_details(package_name)
                     if dataset and self._is_geospatial_dataset(dataset):
+                        # Exclure les jeux géo « en colonne » servis par WMS (voir sync complète).
+                        if self._is_wms_served_geodataset(dataset):
+                            continue
                         geospatial_datasets.append(dataset)
                         logger.info(f"Added geospatial dataset: {package_name}")
                 
@@ -218,6 +226,34 @@ class CKANSync:
                 return True
         
         logger.info(f"Dataset '{dataset.get('name', 'unnamed')}' is not geospatial")
+        return False
+
+    # États de `dtz_geo_status` (posé par ckanext.ogc.plugin.dtz_geo_process_job) qui
+    # signalent une géométrie EN COLONNE du datastore, géométrisée en colonne PostGIS
+    # `geometry` et servie par MapServer (WMS/WFS via mapfile). Voir datastore_geo.py.
+    _GEO_COLUMN_STATUSES = frozenset({'geometrizing', 'indexing', 'mapfile', 'ready', 'error'})
+
+    def _is_wms_geocolumn_resource(self, resource: Dict[str, Any]) -> bool:
+        """Vrai si la ressource porte sa géométrie EN COLONNE (géométrisée par la chaîne
+        ogc en colonne PostGIS `geometry` + mapfile MapServer). Ces ressources sont servies
+        en WMS/WFS ; leur collection pygeoapi « feature » (CKANProvider) est cassée et lente :
+        le provider ne décode pas le WKB de la colonne `geometry` et balaie toute la table
+        (des millions de lignes) avant de renvoyer 0 feature. On les exclut donc de pygeoapi."""
+        status = (resource.get('dtz_geo_status') or '').strip().lower()
+        return status in self._GEO_COLUMN_STATUSES
+
+    def _is_wms_served_geodataset(self, dataset: Dict[str, Any]) -> bool:
+        """Vrai si au moins une ressource du dataset est géo « en colonne » servie par WMS.
+        Le mapfile MapServer est généré au niveau dataset : un tel dataset s'affiche via WMS,
+        pas via pygeoapi. On n'en crée donc pas de collection pygeoapi."""
+        for resource in (dataset.get('resources') or []):
+            if self._is_wms_geocolumn_resource(resource):
+                logger.info(
+                    f"Dataset '{dataset.get('name', 'unnamed')}' est géo « en colonne » "
+                    f"(dtz_geo_status={resource.get('dtz_geo_status')}) : servi par WMS, "
+                    f"exclu de la sync pygeoapi (feature)"
+                )
+                return True
         return False
 
     def _is_geospatial_resource(self, resource: Dict[str, Any]) -> bool:
@@ -1368,7 +1404,21 @@ class CKANSync:
                     'success': False,
                     'error': f'Dataset {dataset_id} is not geospatial'
                 }
-            
+
+            # Jeu géo « en colonne » servi par WMS : pas de collection pygeoapi feature
+            # (le CKANProvider est cassé/lent dessus). On retire toute collection résiduelle
+            # au lieu d'en (re)créer une, et on renvoie un succès (rien à publier côté pygeoapi).
+            if self._is_wms_served_geodataset(dataset):
+                collection_name = dataset.get('name', dataset_id)
+                self.remove_dataset(collection_name)
+                logger.info(f"Dataset {dataset_id} servi par WMS : exclu de pygeoapi (feature)")
+                return {
+                    'success': True,
+                    'dataset_id': dataset_id,
+                    'dataset_name': collection_name,
+                    'skipped': 'wms_served'
+                }
+
             # Update pygeoapi config with this dataset
             success = self.update_pygeoapi_config([dataset], backup_before_write=False)
             
@@ -1714,7 +1764,21 @@ if __name__ == '__main__':
                     'success': False,
                     'error': f'Dataset {dataset_id} is not geospatial'
                 }
-            
+
+            # Jeu géo « en colonne » servi par WMS : pas de collection pygeoapi feature
+            # (le CKANProvider est cassé/lent dessus). On retire toute collection résiduelle
+            # au lieu d'en (re)créer une, et on renvoie un succès (rien à publier côté pygeoapi).
+            if self._is_wms_served_geodataset(dataset):
+                collection_name = dataset.get('name', dataset_id)
+                self.remove_dataset(collection_name)
+                logger.info(f"Dataset {dataset_id} servi par WMS : exclu de pygeoapi (feature)")
+                return {
+                    'success': True,
+                    'dataset_id': dataset_id,
+                    'dataset_name': collection_name,
+                    'skipped': 'wms_served'
+                }
+
             # Update pygeoapi config with this dataset
             success = self.update_pygeoapi_config([dataset], backup_before_write=False)
             

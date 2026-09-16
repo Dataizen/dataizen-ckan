@@ -40,7 +40,11 @@ ACCESS = AUTH + 'access-right/'
 THEME = AUTH + 'data-theme/'
 INSEE_DEP = 'http://id.insee.fr/geo/departement/'
 
-# Thématiques du portail (metadata.js) -> vocabulaire EU data-theme (une ou plusieurs)
+# Le thème du catalogue est désormais stocké comme CODE EU data-theme (ex. ENVI) dans
+# l'extra `theme`. On émet l'URI directement. THEME_MAP reste pour la rétro-compatibilité
+# des jeux non encore migrés (extra `theme` = ancien libellé français).
+EU_THEME_CODES = {'AGRI', 'ECON', 'EDUC', 'ENER', 'ENVI', 'GOVE', 'HEAL',
+                  'INTR', 'JUST', 'REGI', 'SOCI', 'TECH', 'TRAN'}
 THEME_MAP = {
     'Administration et action publique': ['GOVE'],
     'Agriculture': ['AGRI'],
@@ -57,6 +61,15 @@ THEME_MAP = {
     'Occupation des sols': ['ENVI'],
     'Social, santé et sports': ['HEAL'],
 }
+
+
+def theme_codes(value):
+    """Codes EU data-theme d'un jeu : le code lui-même s'il est déjà EU, sinon la
+    conversion de l'ancien libellé français (rétro-compatibilité migration)."""
+    v = (value or '').strip()
+    if v in EU_THEME_CODES:
+        return [v]
+    return THEME_MAP.get(v, [])
 # Formats considérés comme des fichiers téléchargeables (pour dcat:downloadURL)
 FILE_FORMATS = {'CSV', 'TSV', 'JSON', 'GEOJSON', 'XLSX', 'XLS', 'ODS', 'SHP', 'GPKG',
                 'PDF', 'ZIP', 'XML', 'PARQUET', 'GEOTIFF', 'TIFF', 'KML', 'GML',
@@ -144,8 +157,8 @@ class DataizenValidityProfile(RDFProfile):
         # -- Droits d'accès : le flux ne contient que des jeux publics
         g.add((dataset_ref, DCT.accessRights, URIRef(ACCESS + 'PUBLIC')))
 
-        # -- Thématique -> URIs du vocabulaire EU data-theme (en plus du libellé du profil de base)
-        for code in THEME_MAP.get(val('theme'), []):
+        # -- Thématique -> URIs du vocabulaire EU data-theme (code EU stocké, ou ancien libellé)
+        for code in theme_codes(val('theme')):
             g.add((dataset_ref, DCAT.theme, URIRef(THEME + code)))
 
         # -- downloadURL sur les distributions de fichiers (en plus de accessURL) : les
