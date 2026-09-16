@@ -587,19 +587,13 @@ def save(id):
     extras = [e for e in (pkg.get('extras') or []) if e.get('key') != 'dolfin_mapping']
     extras.append({'key': 'dolfin_mapping', 'value': mapping_raw.strip()})
     tk.get_action('package_patch')(context, {'id': pkg['id'], 'extras': extras})
-    # declencher l'harmonisation : re-soumettre les CSV (le hook regenere le NGSI-LD)
-    n = 0
-    for res in pkg.get('resources', []):
-        if (res.get('format') or '').lower() == 'csv' and res.get('datastore_active'):
-            try:
-                tk.get_action('xloader_submit')(
-                    context, {'resource_id': res['id'], 'ignore_hash': True})
-                n += 1
-            except Exception:
-                pass
+    # declencher l'harmonisation par un resource_patch neutre sur chaque CSV source
+    # (hook after_resource_update -> generation NGSI-LD/CSV/GeoJSON). Fiable meme quand
+    # le CSV porte xloader_skip, contrairement a xloader_submit qui ne relance alors rien.
+    n = _trigger_regenerate(dict(context, ignore_auth=True), pkg['id'])
     tk.h.flash_success(
         _("Mapping DOLFIN enregistre. Harmonisation declenchee sur %d ressource(s) ; "
-          "la ressource NGSI-LD apparaitra dans une minute.") % n)
+          "les ressources harmonisees apparaitront dans une minute.") % n)
     return redirect(tk.h.url_for('dataset.read', id=id))
 
 
