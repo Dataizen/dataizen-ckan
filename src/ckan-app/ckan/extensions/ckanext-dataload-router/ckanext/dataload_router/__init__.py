@@ -1183,9 +1183,23 @@ def _parquet_to_csv(src_path):
 def dlr_parquet_job(resource_id):
     """Job ASYNCHRONE (RQ) : convertit un Parquet déposé en CSV (DuckDB, streaming) puis
     charge le datastore via xloader, sur le même schéma que le job GeoJSON. Re-lit la
-    ressource (fiabilité dépôt tus), idempotent (ne recrée pas le CSV dérivé)."""
+    ressource (fiabilité dépôt tus), idempotent (ne recrée pas le CSV dérivé).
+
+    Verrou Redis par ressource : la conversion Parquet (DuckDB) est très rapide, donc les
+    jobs enfilés par after_create ET after_update démarrent quasi simultanément et passent
+    tous le test d'idempotence avant qu'un CSV dérivé ne persiste, d'où des créations
+    concurrentes de la même ressource → conflit de transaction → rollback (aucune ne
+    persiste). Le verrou (SET NX EX) ne laisse passer qu'un seul job ; les doublons quasi
+    simultanés s'arrêtent. Non relâché (expire seul) pour couvrir la fenêtre de course."""
     ctx = {'ignore_auth': True}
     try:
+        try:
+            from ckan.lib.redis import connect_to_redis
+            if not connect_to_redis().set(f"dlr:parquet:{resource_id}", "1", nx=True, ex=600):
+                log.info(f"[DLR] job parquet: déjà pris en charge pour {resource_id} (verrou), skip")
+                return
+        except Exception as e:
+            log.warning(f"[DLR] job parquet: verrou Redis indisponible ({e}), poursuite")
         try:
             res = toolkit.get_action('resource_show')(ctx, {'id': resource_id})
         except Exception as e:
@@ -1205,7 +1219,12 @@ def dlr_parquet_job(resource_id):
         except Exception:
             pass
         log.info(f"[DLR] job parquet: conversion + chargement de {resource_id}")
-        _process_parquet_resource(res)
+        try:
+            _process_parquet_resource(res)
+        except Exception:
+            import traceback as _tb
+            log.error("[DLR] job parquet ECHEC:\n" + _tb.format_exc())
+            raise
         _reindex_package(res.get('package_id'))
     finally:
         try:
@@ -1245,7 +1264,13 @@ def _process_parquet_resource(resource_dict):
         uploaded = _create_uploaded_resource(
             package_id, csv_path, name='converted_from_parquet.csv',
             description=f'Ressource dérivée du Parquet original : {original_url}')
+        try:
+            site_user = toolkit.get_action('get_site_user')({'ignore_auth': True}, {})['name']
+        except Exception:
+            site_user = None
         context = {'ignore_auth': True}
+        if site_user:
+            context['user'] = site_user
         toolkit.get_action('resource_patch')(context, {
             'id': uploaded['id'], 'format': 'CSV', 'mimetype': 'text/csv',
             'resource_type': 'file', 'xloader_skip': False})
@@ -1559,7 +1584,16 @@ def _create_uploaded_resource(package_id, csv_path, name, description='', replac
         description: Description de la ressource
         replace_external_url: Si True, remplace la ressource existante si elle a une URL externe
     """
+    # `user` = utilisateur du site : indispensable hors requête web (job RQ), sinon la
+    # création d'activité déclenchée par resource_create/package_update lève
+    # « User not found » (plugin activity de CKAN 2.11) et la ressource ne persiste pas.
+    try:
+        _site_user = toolkit.get_action('get_site_user')({'ignore_auth': True}, {})['name']
+    except Exception:
+        _site_user = None
     context = {'model': model, 'session': model.Session, 'ignore_auth': True}
+    if _site_user:
+        context['user'] = _site_user
     log.info(f"[DLR] FUNCTION CALLED: _create_uploaded_resource: {csv_path}")
 
     # Vérification d'une ressource déjà existante avec le même nom
