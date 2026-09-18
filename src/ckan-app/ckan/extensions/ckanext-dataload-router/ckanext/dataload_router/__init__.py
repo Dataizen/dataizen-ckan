@@ -1160,19 +1160,73 @@ def _ogr_to_csv(src_path):
     return out_path
 
 
+def _parquet_geo_info(src_path):
+    """Colonne géométrie + code EPSG d'un GeoParquet, via les métadonnées 'geo' du fichier
+    (pyarrow). GeoParquet : géométrie en WKB dans `primary_column`, CRS en PROJJSON (absent
+    => OGC:CRS84 ~ EPSG:4326). Renvoie (None, None) pour un Parquet tabulaire."""
+    try:
+        import json
+        import pyarrow.parquet as pq
+        md = pq.read_schema(src_path).metadata or {}
+        raw = md.get(b'geo')
+        if not raw:
+            return None, None
+        g = json.loads(raw.decode('utf-8'))
+        col = g.get('primary_column')
+        cinfo = (g.get('columns') or {}).get(col) or {}
+        epsg = 4326
+        crs = cinfo.get('crs')
+        if isinstance(crs, dict):
+            code = (crs.get('id') or {}).get('code')
+            try:
+                epsg = int(code) if code else 4326
+            except Exception:
+                epsg = 4326
+        elif isinstance(crs, str) and 'CRS84' not in crs:
+            digits = ''.join(ch for ch in crs if ch.isdigit())
+            epsg = int(digits) if digits else 4326
+        return col, epsg
+    except Exception as e:
+        log.warning(f"[DLR] parquet: lecture des métadonnées geo échouée: {e}")
+        return None, None
+
+
 def _parquet_to_csv(src_path):
-    """Convertit un Parquet en CSV via DuckDB (lecture native, en streaming, mémoire
-    bornée, sans egress ni extension). Renvoie le chemin du CSV. Les colonnes non
-    tabulaires (ex. géométrie WKB d'un GeoParquet) sont exportées telles quelles ; la
-    prise en charge géographique fine du GeoParquet viendra dans un incrément dédié."""
+    """Convertit un Parquet en CSV via DuckDB (lecture native, streaming, mémoire bornée).
+    Pour un GeoParquet, la géométrie WKB est convertie en WKT (colonne « WKT », reprojetée
+    en EPSG:4326 si besoin, extension spatial bakée) : le pipeline de géométrisation la
+    reconnaît, d'où le MÊME canonique que GeoJSON/SHP (datastore -> PostGIS -> WMS/WFS, et
+    harmonisable par DOLFIN). Repli tabulaire si pas de géométrie ou en cas d'échec géo."""
     import duckdb
     fd, out_path = tempfile.mkstemp(suffix='.csv')
     os.close(fd)
     s = src_path.replace("'", "''")
     o = out_path.replace("'", "''")
-    con = duckdb.connect()
+    geo_col, epsg = _parquet_geo_info(src_path)
+    ext_dir = os.environ.get('DUCKDB_EXT_DIR', '/opt/duckdb_ext')
+    con = duckdb.connect(config={'extension_directory': ext_dir})
     try:
         con.execute("PRAGMA threads=2")
+        if geo_col:
+            try:
+                con.execute("LOAD spatial")
+                gq = geo_col.replace('"', '""')
+                # DuckDB spatial décode déjà le GeoParquet en type GEOMETRY (colonne
+                # directe). Reprojection en 4326 avec always_xy (sinon EPSG:4326 sort en
+                # lat/lon selon l'ordre d'axe de l'autorité, ce qui inverse les coordonnées).
+                geom = f'"{gq}"'
+                if epsg and int(epsg) != 4326:
+                    geom = f"ST_Transform({geom}, 'EPSG:{int(epsg)}', 'EPSG:4326', always_xy := true)"
+                cols = [r[0] for r in con.execute(
+                    f"DESCRIBE SELECT * FROM read_parquet('{s}')").fetchall()]
+                others = ", ".join('"' + c.replace('"', '""') + '"' for c in cols if c != geo_col)
+                sel = (others + ", " if others else "") + f'ST_AsText({geom}) AS "WKT"'
+                con.execute(
+                    f"COPY (SELECT {sel} FROM read_parquet('{s}')) TO '{o}' "
+                    "(FORMAT CSV, HEADER, DELIMITER ',')")
+                return out_path
+            except Exception as e:
+                log.warning(f"[DLR] parquet: conversion géo échouée ({e}), repli tabulaire")
         con.execute(
             f"COPY (SELECT * FROM read_parquet('{s}')) TO '{o}' (FORMAT CSV, HEADER, DELIMITER ',')")
     finally:

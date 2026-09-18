@@ -31,6 +31,14 @@ RUN pip install --no-cache-dir \
     pip install -e git+https://github.com/ckan/ckanext-showcase.git#egg=ckanext-showcase || echo "⚠️ ckanext-showcase installation failed, continuing..." && \
     pip install ckanext-composite || echo "⚠️ ckanext-composite installation failed, continuing..."
 
+# DuckDB : baker l'extension `spatial` (GeoParquet : WKB -> WKT + reprojection) dans un
+# répertoire d'extensions accessible au runtime, pour ne PAS dépendre d'un egress au
+# chargement (offline-safe). Le runtime charge depuis DUCKDB_EXT_DIR (= /opt/duckdb_ext).
+ENV DUCKDB_EXT_DIR=/opt/duckdb_ext
+RUN mkdir -p /opt/duckdb_ext && \
+    python3 -c "import duckdb; duckdb.connect(config={'extension_directory':'/opt/duckdb_ext'}).execute('INSTALL spatial')" && \
+    chmod -R a+rwX /opt/duckdb_ext
+
 # Install system libraries needed for Pillow, matplotlib and image processing
 # Also install cron for scheduled harvest jobs, postgresql-client and redis-cli
 RUN apt-get update && apt-get install -y \
