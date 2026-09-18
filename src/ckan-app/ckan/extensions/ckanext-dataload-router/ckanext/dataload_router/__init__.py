@@ -717,6 +717,16 @@ class DataloadRouter(SingletonPlugin):
                 log.info(f"[DLR] conversion geojson enfilée (job async, after update) pour {resource['id']}")
             except Exception as e:
                 log.error(f"[DLR][geojson] enqueue après update échec: {e}")
+        # parquet uploadé : conversion en CSV (DuckDB) via un job async (même logique que geojson)
+        if (resource.get('format') or '').lower() in ['parquet', 'pq'] and resource.get('url_type') == 'upload':
+            try:
+                if not resource.get('xloader_skip'):
+                    toolkit.get_action('resource_patch')(dict(context, ignore_auth=True), {
+                        'id': resource['id'], 'xloader_skip': True, 'datastore_active': False})
+                toolkit.enqueue_job(dlr_parquet_job, [resource['id']], title=f"dlr parquet {resource['id']}")
+                log.info(f"[DLR] conversion parquet enfilée (job async, after update) pour {resource['id']}")
+            except Exception as e:
+                log.error(f"[DLR][parquet] enqueue après update échec: {e}")
         # harmonisation DOLFIN : gérée par le plugin dédié ckanext-dolfin (son propre hook).
         if resource.get("datastore_active") is True:
             self.inject_records_count(context, resource)
@@ -769,7 +779,11 @@ class DataloadRouter(SingletonPlugin):
                 resource['format'] = 'GeoJSON'
                 format_ = 'geojson'
                 log.info(f"[DLR] Format 'GeoJSON' défini automatiquement pour ressource uploadée")
-        
+            elif url and url.lower().endswith(('.parquet', '.pq')):
+                resource['format'] = 'Parquet'
+                format_ = 'parquet'
+                log.info(f"[DLR] Format 'Parquet' détecté automatiquement pour ressource uploadée")
+
         # Ne pas marquer les ressources CSV comme xloader_skip
         # Les formats géospatiaux (ZIP, SHP, GeoJSON) ne doivent pas être traités par XLoader
         # Utiliser le format détecté (format_) pour la vérification
@@ -809,14 +823,14 @@ class DataloadRouter(SingletonPlugin):
         
         # IMPORTANT: S'assurer que xloader_skip est défini IMMÉDIATEMENT pour les ressources JSON
         # avant que xloader ne soit déclenché (xloader peut être appelé avant ce hook)
-        if (resource.get('format') or '').lower() in ['json', 'geojson']:
+        if (resource.get('format') or '').lower() in ['json', 'geojson', 'parquet', 'pq']:
             try:
                 toolkit.get_action('resource_patch')(admin_context, {
                     'id': resource['id'],
                     'xloader_skip': True,
                     'datastore_active': False
                 })
-                log.info(f"[DLR] xloader_skip défini pour la ressource JSON {resource['id']}")
+                log.info(f"[DLR] xloader_skip défini pour la ressource {resource['id']}")
             except Exception as e:
                 log.error(f"[DLR] Erreur lors de la définition de xloader_skip: {e}")
         
@@ -862,7 +876,19 @@ class DataloadRouter(SingletonPlugin):
                     log.info(f"[DLR] conversion geojson enfilée (job async) pour {resource['id']}")
                 except Exception as e:
                     log.error(f"[DLR] Error enqueue JSON/GeoJSON processing: {e}")
-            
+
+            # Parquet : xloader ne lit pas le parquet. Conversion en CSV (DuckDB) dans un
+            # job async, puis chargement datastore via xloader (même schéma que geojson).
+            if (resource.get('format') or '').lower() in ['parquet', 'pq']:
+                try:
+                    toolkit.get_action('resource_patch')(admin_context, {
+                        'id': resource['id'], 'xloader_skip': True, 'datastore_active': False})
+                    toolkit.enqueue_job(dlr_parquet_job, [resource['id']],
+                                        title=f"dlr parquet {resource['id']}")
+                    log.info(f"[DLR] conversion parquet enfilée (job async) pour {resource['id']}")
+                except Exception as e:
+                    log.error(f"[DLR] Error enqueue Parquet processing: {e}")
+
             # Gestion des ressources CSV avec URL externe
             # Télécharger le CSV et créer une ressource uploadée pour permettre le chargement dans le datastore
             if (resource.get('format') or '').lower() == 'csv' and resource.get('xloader_skip'):
@@ -1132,6 +1158,110 @@ def _ogr_to_csv(src_path):
          '-lco', 'STRING_QUOTING=IF_NEEDED', out_path, src_path],
         check=True, capture_output=True, timeout=7200)
     return out_path
+
+
+def _parquet_to_csv(src_path):
+    """Convertit un Parquet en CSV via DuckDB (lecture native, en streaming, mémoire
+    bornée, sans egress ni extension). Renvoie le chemin du CSV. Les colonnes non
+    tabulaires (ex. géométrie WKB d'un GeoParquet) sont exportées telles quelles ; la
+    prise en charge géographique fine du GeoParquet viendra dans un incrément dédié."""
+    import duckdb
+    fd, out_path = tempfile.mkstemp(suffix='.csv')
+    os.close(fd)
+    s = src_path.replace("'", "''")
+    o = out_path.replace("'", "''")
+    con = duckdb.connect()
+    try:
+        con.execute("PRAGMA threads=2")
+        con.execute(
+            f"COPY (SELECT * FROM read_parquet('{s}')) TO '{o}' (FORMAT CSV, HEADER, DELIMITER ',')")
+    finally:
+        con.close()
+    return out_path
+
+
+def dlr_parquet_job(resource_id):
+    """Job ASYNCHRONE (RQ) : convertit un Parquet déposé en CSV (DuckDB, streaming) puis
+    charge le datastore via xloader, sur le même schéma que le job GeoJSON. Re-lit la
+    ressource (fiabilité dépôt tus), idempotent (ne recrée pas le CSV dérivé)."""
+    ctx = {'ignore_auth': True}
+    try:
+        try:
+            res = toolkit.get_action('resource_show')(ctx, {'id': resource_id})
+        except Exception as e:
+            log.warning(f"[DLR] job parquet: ressource {resource_id} introuvable: {e}")
+            return
+        if (res.get('format') or '').lower() not in ('parquet', 'pq'):
+            return
+        if res.get('url_type') != 'upload':
+            log.info(f"[DLR] job parquet: fichier pas encore posé pour {resource_id}, on saute")
+            return
+        try:
+            pkg = toolkit.get_action('package_show')(ctx, {'id': res['package_id']})
+            if any((r.get('name') or '').startswith('converted_from_parquet') and r.get('url_type') == 'upload'
+                   for r in pkg.get('resources', [])):
+                log.info(f"[DLR] job parquet: CSV dérivé déjà présent, skip {resource_id}")
+                return
+        except Exception:
+            pass
+        log.info(f"[DLR] job parquet: conversion + chargement de {resource_id}")
+        _process_parquet_resource(res)
+        _reindex_package(res.get('package_id'))
+    finally:
+        try:
+            model.Session.remove()
+        except Exception:
+            pass
+
+
+def _process_parquet_resource(resource_dict):
+    """Localise le fichier Parquet (filestore d'un upload, sinon téléchargement streaming),
+    le convertit en CSV (DuckDB) et le soumet à XLoader comme ressource CSV dérivée."""
+    original_url = resource_dict['url']
+    package_id = resource_dict['package_id']
+    url_type = resource_dict.get('url_type', '')
+    src_path = None
+    tmp_download = None
+    if url_type == 'upload':
+        try:
+            from ckan.lib.uploader import get_resource_uploader
+            local_path = get_resource_uploader(resource_dict).get_path(resource_dict['id'])
+            if local_path and os.path.exists(local_path):
+                src_path = local_path
+        except Exception as e:
+            log.warning(f"[DLR] parquet: localisation upload impossible: {e}, fallback GET")
+    if src_path is None:
+        download_url = original_url.replace('localhost:8080', 'localhost:5000')
+        with requests.get(download_url, stream=True, timeout=300) as response:
+            response.raise_for_status()
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.parquet', mode='wb') as tmp:
+                for chunk in response.iter_content(8 * 1024 * 1024):
+                    tmp.write(chunk)
+                src_path = tmp.name
+                tmp_download = src_path
+    csv_path = None
+    try:
+        csv_path = _parquet_to_csv(src_path)
+        uploaded = _create_uploaded_resource(
+            package_id, csv_path, name='converted_from_parquet.csv',
+            description=f'Ressource dérivée du Parquet original : {original_url}')
+        context = {'ignore_auth': True}
+        toolkit.get_action('resource_patch')(context, {
+            'id': uploaded['id'], 'format': 'CSV', 'mimetype': 'text/csv',
+            'resource_type': 'file', 'xloader_skip': False})
+        toolkit.get_action('xloader_submit')(context, {'resource_id': uploaded['id']})
+        return uploaded['id']
+    finally:
+        if tmp_download and os.path.exists(tmp_download):
+            try:
+                os.remove(tmp_download)
+            except Exception:
+                pass
+        if csv_path and os.path.exists(csv_path):
+            try:
+                os.remove(csv_path)
+            except Exception:
+                pass
 
 
 def dlr_geojson_job(resource_id):

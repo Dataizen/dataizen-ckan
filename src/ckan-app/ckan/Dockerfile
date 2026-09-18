@@ -18,8 +18,11 @@ RUN pip install ckan[extensions]
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 # Install Python packages and CKAN extensions
+# duckdb + pyarrow : socle multi-format (ingestion/conversion Parquet et autres formats
+# colonne/tabulaires ; DuckDB lit le Parquet en natif, sans egress ni extension).
 RUN pip install --no-cache-dir \
-    pika factory_boy mock pytest pandas geopandas geojson pyproj pyyaml owslib openpyxl xlrd && \
+    pika factory_boy mock pytest pandas geopandas geojson pyproj pyyaml owslib openpyxl xlrd \
+    duckdb pyarrow && \
     pip install -e git+https://github.com/ckan/ckanext-harvest.git#egg=ckanext-harvest && \
     pip install -e git+https://github.com/ckan/ckanext-dcat.git#egg=ckanext-dcat && \
     pip install -e git+https://github.com/ckan/ckanext-geoview.git#egg=ckanext-geoview && \
