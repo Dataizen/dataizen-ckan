@@ -196,8 +196,19 @@ class OGCPlugin(SingletonPlugin):
         """
         Retire ogc_resources avant envoi à Solr (multi-valued, non supporté par le schéma).
         Ce champ sert uniquement à l'API package_show, pas à la recherche.
+
+        Indexe aussi les codes de territoire dans un champ Solr STRING multi-valué
+        (`vocab_territoires`, verbatim) : `extras_territoires` est un champ TEXTE tokenisé
+        qui casse les codes alphanumériques (GSS britanniques « E09000001 » -> « 09000001 »,
+        ITL2 « TLI3 », Corse « 2A »). La facette Territoire du portail se base sur
+        `vocab_territoires` pour un filtrage exact quel que soit le pays.
         """
         pkg_dict.pop('ogc_resources', None)
+        terr = pkg_dict.get('extras_territoires') or pkg_dict.get('territoires')
+        if terr:
+            if isinstance(terr, str):
+                terr = terr.split()
+            pkg_dict['vocab_territoires'] = [str(c).strip() for c in terr if str(c).strip()]
         return pkg_dict
     
     def __init__(self, name=None):
