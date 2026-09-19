@@ -727,6 +727,16 @@ class DataloadRouter(SingletonPlugin):
                 log.info(f"[DLR] conversion parquet enfilée (job async, after update) pour {resource['id']}")
             except Exception as e:
                 log.error(f"[DLR][parquet] enqueue après update échec: {e}")
+        # fichier géo OGR uploadé (Shapefile ZIP, GeoPackage) : conversion CSV via job async (idem geojson)
+        if (resource.get('format') or '').lower() in ['zip', 'shp', 'gpkg', 'geopackage'] and resource.get('url_type') == 'upload':
+            try:
+                if not resource.get('xloader_skip'):
+                    toolkit.get_action('resource_patch')(dict(context, ignore_auth=True), {
+                        'id': resource['id'], 'xloader_skip': True, 'datastore_active': False})
+                toolkit.enqueue_job(dlr_ogr_geo_job, [resource['id']], title=f"dlr ogr-geo {resource['id']}")
+                log.info(f"[DLR] conversion ogr-geo (shp/gpkg) enfilée (job async, after update) pour {resource['id']}")
+            except Exception as e:
+                log.error(f"[DLR][ogr-geo] enqueue après update échec: {e}")
         # harmonisation DOLFIN : gérée par le plugin dédié ckanext-dolfin (son propre hook).
         if resource.get("datastore_active") is True:
             self.inject_records_count(context, resource)
@@ -783,6 +793,10 @@ class DataloadRouter(SingletonPlugin):
                 resource['format'] = 'Parquet'
                 format_ = 'parquet'
                 log.info(f"[DLR] Format 'Parquet' détecté automatiquement pour ressource uploadée")
+            elif url and url.lower().endswith('.gpkg'):
+                resource['format'] = 'GPKG'
+                format_ = 'gpkg'
+                log.info(f"[DLR] Format 'GPKG' (GeoPackage) détecté automatiquement pour ressource uploadée")
 
         # Ne pas marquer les ressources CSV comme xloader_skip
         # Les formats géospatiaux (ZIP, SHP, GeoJSON) ne doivent pas être traités par XLoader
@@ -823,7 +837,7 @@ class DataloadRouter(SingletonPlugin):
         
         # IMPORTANT: S'assurer que xloader_skip est défini IMMÉDIATEMENT pour les ressources JSON
         # avant que xloader ne soit déclenché (xloader peut être appelé avant ce hook)
-        if (resource.get('format') or '').lower() in ['json', 'geojson', 'parquet', 'pq']:
+        if (resource.get('format') or '').lower() in ['json', 'geojson', 'parquet', 'pq', 'zip', 'shp', 'gpkg', 'geopackage']:
             try:
                 toolkit.get_action('resource_patch')(admin_context, {
                     'id': resource['id'],
@@ -888,6 +902,19 @@ class DataloadRouter(SingletonPlugin):
                     log.info(f"[DLR] conversion parquet enfilée (job async) pour {resource['id']}")
                 except Exception as e:
                     log.error(f"[DLR] Error enqueue Parquet processing: {e}")
+
+            # Fichiers géo OGR (Shapefile ZIP, GeoPackage) : xloader ne les lit pas. Conversion
+            # en CSV (ogr2ogr, WKT, reprojection 4326) via un job async, puis chargement datastore
+            # et géométrisation (même canonique que GeoJSON/GeoParquet).
+            if (resource.get('format') or '').lower() in ['zip', 'shp', 'gpkg', 'geopackage']:
+                try:
+                    toolkit.get_action('resource_patch')(admin_context, {
+                        'id': resource['id'], 'xloader_skip': True, 'datastore_active': False})
+                    toolkit.enqueue_job(dlr_ogr_geo_job, [resource['id']],
+                                        title=f"dlr ogr-geo {resource['id']}")
+                    log.info(f"[DLR] conversion ogr-geo (shp/gpkg) enfilée (job async) pour {resource['id']}")
+                except Exception as e:
+                    log.error(f"[DLR] Error enqueue OGR geo processing: {e}")
 
             # Gestion des ressources CSV avec URL externe
             # Télécharger le CSV et créer une ressource uploadée pour permettre le chargement dans le datastore
@@ -1380,6 +1407,134 @@ def dlr_geojson_job(resource_id):
             model.Session.remove()
         except Exception:
             pass
+
+
+def _ogr_geo_to_csv(src_path, is_zip=False):
+    """Convertit un fichier géo OGR (Shapefile en ZIP, GeoPackage, et par extension tout format
+    lisible par GDAL) en CSV via ogr2ogr : géométrie exportée en WKT (colonne « WKT »), reprojetée
+    en EPSG:4326 quand la source a un CRS connu (.prj du shapefile, métadonnées du GeoPackage).
+    Streaming disque (mémoire bornée). Même canonique que GeoJSON/GeoParquet (datastore ->
+    géométrisation PostGIS/WMS/WFS). Prend la 1re couche pour un fichier multi-couches."""
+    fd, out_path = tempfile.mkstemp(suffix='.csv')
+    os.close(fd)
+    os.remove(out_path)  # ogr2ogr crée le fichier lui-même
+    # /vsizip/ : GDAL lit le shapefile directement dans le ZIP (détection par contenu, l'extension
+    # importe peu, le filestore stocke sans extension).
+    ogr_src = f"/vsizip/{src_path}" if is_zip else src_path
+    base = ['ogr2ogr', '-f', 'CSV', '-lco', 'GEOMETRY=AS_WKT', '-lco', 'SEPARATOR=COMMA',
+            '-lco', 'STRING_QUOTING=IF_NEEDED']
+    try:
+        # Cas normal : source avec CRS -> reprojection vers 4326 (cohérent avec la carte).
+        subprocess.run(base + ['-t_srs', 'EPSG:4326', out_path, ogr_src],
+                       check=True, capture_output=True, timeout=7200)
+        return out_path
+    except subprocess.CalledProcessError as e:
+        # Source sans CRS connu (shapefile sans .prj) : ogr2ogr ne peut pas reprojeter. Repli :
+        # conversion sans -t_srs (géométrie gardée dans ses coordonnées natives).
+        err = (e.stderr or b'').decode('utf-8', 'ignore')[:200]
+        log.warning(f"[DLR] ogr2ogr reprojection 4326 échouée ({err}), repli sans -t_srs")
+        if os.path.exists(out_path):
+            os.remove(out_path)
+        subprocess.run(base + [out_path, ogr_src], check=True, capture_output=True, timeout=7200)
+        return out_path
+
+
+def dlr_ogr_geo_job(resource_id):
+    """Job ASYNCHRONE (RQ, worker CKAN) : convertit un fichier géo OGR déposé (Shapefile ZIP,
+    GeoPackage) en CSV (ogr2ogr, WKT, reprojection 4326) puis charge le datastore. Même schéma
+    que dlr_geojson_job (hors requête web, re-lit la ressource, idempotent)."""
+    ctx = {'ignore_auth': True}
+    try:
+        try:
+            res = toolkit.get_action('resource_show')(ctx, {'id': resource_id})
+        except Exception as e:
+            log.warning(f"[DLR] job ogr-geo: ressource {resource_id} introuvable: {e}")
+            return
+        if (res.get('format') or '').lower() not in ('zip', 'shp', 'gpkg', 'geopackage'):
+            return
+        if res.get('url_type') != 'upload':
+            log.info(f"[DLR] job ogr-geo: fichier pas encore posé pour {resource_id}, on saute")
+            return
+        # Idempotence : ne pas recréer un CSV dérivé s'il en existe déjà un pour ce jeu.
+        try:
+            pkg = toolkit.get_action('package_show')(ctx, {'id': res['package_id']})
+            if any((r.get('name') or '').startswith('converted_from_geo') and r.get('url_type') == 'upload'
+                   for r in pkg.get('resources', [])):
+                log.info(f"[DLR] job ogr-geo: CSV dérivé déjà présent, skip {resource_id}")
+                return
+        except Exception:
+            pass
+        log.info(f"[DLR] job ogr-geo: conversion + chargement de {resource_id}")
+        _process_ogr_geo_resource(res)
+        _reindex_package(res.get('package_id'))
+    finally:
+        try:
+            model.Session.remove()
+        except Exception:
+            pass
+
+
+def _process_ogr_geo_resource(resource_dict):
+    """Convertit un fichier géo OGR (Shapefile ZIP / GeoPackage) en CSV (ogr2ogr) et le soumet à
+    XLoader comme ressource dérivée `converted_from_geo.csv`. Lecture directe du filestore (jamais
+    en mémoire) ; repli téléchargement streaming si le fichier local est introuvable."""
+    fmt = (resource_dict.get('format') or '').lower()
+    url = resource_dict.get('url') or ''
+    is_zip = fmt in ('zip', 'shp') or url.lower().endswith(('.zip', '.shp'))
+    package_id = resource_dict['package_id']
+    url_type = resource_dict.get('url_type', '')
+    src_path = None
+    tmp_download = None
+    if url_type == 'upload':
+        try:
+            from ckan.lib.uploader import get_resource_uploader
+            local_path = get_resource_uploader(resource_dict).get_path(resource_dict['id'])
+            if local_path and os.path.exists(local_path):
+                src_path = local_path
+            else:
+                log.warning(f"[DLR] ogr-geo: fichier upload introuvable: {local_path}, fallback GET")
+        except Exception as e:
+            log.warning(f"[DLR] ogr-geo: localisation upload échouée: {e}, fallback GET")
+    if src_path is None:
+        suffix = '.zip' if is_zip else '.gpkg'
+        download_url = url.replace('localhost:8080', 'localhost:5000')
+        log.info(f"[DLR] ogr-geo: téléchargement (streaming) depuis : {download_url}")
+        with requests.get(download_url, stream=True, timeout=300) as response:
+            response.raise_for_status()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, mode='wb') as tmp:
+                for chunk in response.iter_content(8 * 1024 * 1024):
+                    tmp.write(chunk)
+                src_path = tmp.name
+                tmp_download = src_path
+    csv_path = None
+    staged = None
+    try:
+        # GDAL/ogr2ogr détecte le format par l'EXTENSION ; or le filestore stocke le fichier sans
+        # extension (nom = id de ressource), et /vsizip/ comme pyogrio échouent alors à l'ouvrir.
+        # On expose donc un lien avec la bonne extension (.zip pour un shapefile, .gpkg sinon).
+        suffix = '.zip' if is_zip else '.gpkg'
+        ogr_input = src_path
+        if not src_path.lower().endswith(suffix):
+            staged = tempfile.mktemp(suffix=suffix)
+            os.symlink(os.path.abspath(src_path), staged)
+            ogr_input = staged
+        csv_path = _ogr_geo_to_csv(ogr_input, is_zip=is_zip)
+        uploaded = _create_uploaded_resource(
+            package_id, csv_path, name='converted_from_geo.csv',
+            description=f'Ressource dérivée du fichier géo original : {url}')
+        context = {'ignore_auth': True}
+        toolkit.get_action('resource_patch')(context, {
+            'id': uploaded['id'], 'format': 'CSV', 'mimetype': 'text/csv',
+            'resource_type': 'file', 'xloader_skip': False})
+        toolkit.get_action('xloader_submit')(context, {'resource_id': uploaded['id']})
+        return uploaded['id']
+    finally:
+        if staged and os.path.islink(staged):
+            os.remove(staged)
+        if tmp_download and os.path.exists(tmp_download):
+            os.remove(tmp_download)
+        if csv_path and os.path.exists(csv_path):
+            os.remove(csv_path)
 
 
 def _reindex_package(package_id):
