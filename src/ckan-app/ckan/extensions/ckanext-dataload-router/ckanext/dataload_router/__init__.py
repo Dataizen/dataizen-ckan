@@ -708,7 +708,7 @@ class DataloadRouter(SingletonPlugin):
         # geojson/json uploadé : conversion en CSV via un JOB ASYNCHRONE. C'est ICI (after
         # update) que le fichier est réellement posé dans le flux de dépôt tus (le hook pose
         # le fichier PUIS patch url_type=upload) : d'où la fiabilité. Job idempotent.
-        if (resource.get('format') or '').lower() in ['json', 'geojson'] and resource.get('url_type') == 'upload':
+        if (resource.get('format') or '').lower() in ['json', 'geojson', 'geojsonl', 'geojsons', 'ndjson', 'jsonl'] and resource.get('url_type') == 'upload':
             try:
                 if not resource.get('xloader_skip'):
                     toolkit.get_action('resource_patch')(dict(context, ignore_auth=True), {
@@ -766,7 +766,15 @@ class DataloadRouter(SingletonPlugin):
         mimetype = (resource.get('mimetype') or '').lower()
         url = resource.get('url') or ''
         name = resource.get('name') or ''
-        
+
+        # Normaliser les variantes GeoJSONSeq / NDJSON déclarées explicitement par le déposant
+        # vers 'geojson' : tout le routage (job de conversion, skip xloader) les prend alors
+        # en charge, et la conversion ogr2ogr choisit le driver GeoJSONSeq selon le contenu.
+        if format_ in ('geojsonl', 'geojsons', 'geojson-seq', 'geojsonseq', 'ndjson', 'jsonl'):
+            resource['format'] = 'GeoJSON'
+            format_ = 'geojson'
+            log.info(f"[DLR] Format '{resource.get('format')}' normalisé en 'GeoJSON' (GeoJSONSeq/NDJSON)")
+
         # Détecter le format depuis le mimetype, l'URL ou le nom de fichier si non défini
         if not format_ or format_ == '':
             # Détecter CSV en premier (pour permettre le chargement dans le datastore)
@@ -785,6 +793,12 @@ class DataloadRouter(SingletonPlugin):
                 resource['format'] = 'SHP'
                 format_ = 'shp'
                 log.info(f"[DLR] Format 'SHP' défini automatiquement pour ressource uploadée")
+            elif url and url.lower().endswith(('.geojsonl', '.geojsons', '.ndjson', '.jsonl')):
+                # GeoJSONSeq / NDJSON (un Feature par ligne) : traité comme du GeoJSON
+                # (même routage + conversion ogr2ogr via le driver GeoJSONSeq).
+                resource['format'] = 'GeoJSON'
+                format_ = 'geojson'
+                log.info(f"[DLR] Format 'GeoJSON' (GeoJSONSeq/NDJSON) défini automatiquement pour ressource uploadée")
             elif url and url.lower().endswith('.geojson'):
                 resource['format'] = 'GeoJSON'
                 format_ = 'geojson'
@@ -1172,19 +1186,74 @@ def _process_external_csv_resource(resource_dict):
             os.remove(tmp_csv_path)
 
 
-def _ogr_to_csv(src_path):
-    """Convertit un GeoJSON/JSON en CSV via ogr2ogr (GDAL), en STREAMING sur disque
-    (mémoire bornée, pas de chargement du fichier en RAM). La géométrie est exportée en
-    WKT (colonne « WKT »), chargeable ensuite en datastore. Utilisé pour les GROS fichiers,
-    où la conversion en mémoire ferait un OOM (incident GeoJSON 5,5 Go du 09/09/2026)."""
+def _detect_geojson_kind(src_path):
+    """Renvoie 'fc' (FeatureCollection GeoJSON), 'seq' (GeoJSONSeq / NDJSON : une Feature
+    par ligne, p.ex. .geojsonl) ou None (JSON non géographique). Lecture des 1ers octets
+    seulement (pas de chargement complet)."""
+    try:
+        with open(src_path, 'rb') as f:
+            head = f.read(65536)
+    except Exception:
+        return None
+    # JSON-Seq (RFC 8142) peut préfixer chaque enregistrement d'un RS (0x1e) ; BOM possible.
+    txt = head.decode('utf-8', 'ignore').lstrip('﻿ \t\r\n\x1e')
+    low = txt[:8192].lower()
+    if '"featurecollection"' in low:
+        return 'fc'
+    if txt.startswith('{') and '"type"' in low and ('"feature"' in low or '"geometry"' in low):
+        # plusieurs objets JSON sur des lignes distinctes => séquence (NDJSON) ; sinon Feature seule
+        obj_lines = [ln for ln in txt.splitlines() if ln.strip().startswith('{')]
+        return 'seq' if len(obj_lines) >= 2 else 'fc'
+    return None
+
+
+def _wkt_out_of_wgs84_range(csv_path):
+    """Vrai si la 1re géométrie du CSV a des coordonnées hors plage WGS84 (|lon|>180 ou
+    |lat|>90) : signe d'un CRS source mal déclaré (ex. GeoJSON annoncé CRS84 mais en fait
+    projeté), que la reprojection n'a pas pu corriger. Sert à prévenir le déposant."""
+    try:
+        import re
+        with open(csv_path, 'r', encoding='utf-8', errors='ignore') as f:
+            f.readline()  # en-tête
+            for _ in range(20):
+                line = f.readline()
+                if not line:
+                    break
+                m = re.search(r'(-?\d+\.?\d*)\s+(-?\d+\.?\d*)', line)
+                if m:
+                    x, y = float(m.group(1)), float(m.group(2))
+                    return abs(x) > 180.0 or abs(y) > 90.0
+    except Exception:
+        pass
+    return False
+
+
+def _ogr_to_csv(src_path, seq=False):
+    """Convertit un GeoJSON (FeatureCollection) ou GeoJSONSeq/NDJSON en CSV via ogr2ogr
+    (GDAL), en STREAMING sur disque (mémoire bornée, pas de chargement en RAM). Géométrie
+    exportée en WKT (colonne « WKT »), **reprojetée en EPSG:4326** quand la source a un CRS
+    connu (le `crs` du GeoJSON, ex. EPSG:3857) — la carte web attend du WGS84 ; repli sans
+    -t_srs si le CRS est inconnu. `seq=True` force le driver GeoJSONSeq (une Feature/ligne).
+    Streaming = pas d'OOM sur les gros fichiers (incident GeoJSON 5,5 Go du 09/09/2026)."""
     fd, out_path = tempfile.mkstemp(suffix='.csv')
     os.close(fd)
     os.remove(out_path)  # ogr2ogr crée le fichier lui-même
-    subprocess.run(
-        ['ogr2ogr', '-f', 'CSV', '-lco', 'GEOMETRY=AS_WKT', '-lco', 'SEPARATOR=COMMA',
-         '-lco', 'STRING_QUOTING=IF_NEEDED', out_path, src_path],
-        check=True, capture_output=True, timeout=7200)
-    return out_path
+    # GeoJSONSeq: force le driver NDJSON (sinon GDAL tente le driver GeoJSON et échoue).
+    ogr_src = f"GeoJSONSeq:{src_path}" if seq else src_path
+    base = ['ogr2ogr', '-f', 'CSV', '-lco', 'GEOMETRY=AS_WKT', '-lco', 'SEPARATOR=COMMA',
+            '-lco', 'STRING_QUOTING=IF_NEEDED']
+    try:
+        subprocess.run(base + ['-t_srs', 'EPSG:4326', out_path, ogr_src],
+                       check=True, capture_output=True, timeout=7200)
+        return out_path
+    except subprocess.CalledProcessError as e:
+        # CRS source inconnu : ogr2ogr ne peut pas reprojeter. Repli : coordonnées natives.
+        err = (e.stderr or b'').decode('utf-8', 'ignore')[:200]
+        log.warning(f"[DLR] ogr2ogr reprojection 4326 échouée ({err}), repli sans -t_srs")
+        if os.path.exists(out_path):
+            os.remove(out_path)
+        subprocess.run(base + [out_path, ogr_src], check=True, capture_output=True, timeout=7200)
+        return out_path
 
 
 def _parquet_geo_info(src_path):
@@ -1382,7 +1451,7 @@ def dlr_geojson_job(resource_id):
         except Exception as e:
             log.warning(f"[DLR] job geojson: ressource {resource_id} introuvable: {e}")
             return
-        if (res.get('format') or '').lower() not in ('json', 'geojson'):
+        if (res.get('format') or '').lower() not in ('json', 'geojson', 'geojsonl', 'geojsons', 'ndjson', 'jsonl'):
             return
         if res.get('url_type') != 'upload':
             log.info(f"[DLR] job geojson: fichier pas encore posé pour {resource_id}, on saute")
@@ -1594,10 +1663,23 @@ def _process_json_resource(resource_dict):
                 tmp_download = src_path
 
     csv_path = None
+    _crs_warning = ''
     try:
-        # 2. Conversion en CSV. Au-delà du seuil : ogr2ogr STREAMING (mémoire bornée) pour
-        # les gros GeoJSON sans OOM. En dessous : conversion existante (schéma inchangé).
-        if os.path.getsize(src_path) > DATALOAD_MAX_SYNC_BYTES:
+        # 2. Conversion en CSV.
+        #  - GeoJSON (FeatureCollection) ou GeoJSONSeq/NDJSON (.geojsonl) : ogr2ogr STREAMING,
+        #    géométrie WKT, REPROJETÉE en EPSG:4326 (la carte web attend du WGS84). Quelle que
+        #    soit la taille (pas d'OOM). Gère le NDJSON via le driver GeoJSONSeq.
+        #  - Sinon (JSON tabulaire) : gros = ogr2ogr streaming, petit = conversion Python.
+        kind = _detect_geojson_kind(src_path)
+        if kind:
+            log.info(f"[DLR] GeoJSON (kind={kind}) : conversion ogr2ogr reprojetée EPSG:4326 pour {resource_dict.get('id')}")
+            csv_path = _ogr_to_csv(src_path, seq=(kind == 'seq'))
+            if _wkt_out_of_wgs84_range(csv_path):
+                _crs_warning = (" ⚠ CRS source probablement mal déclaré (coordonnées hors plage "
+                                "WGS84 après conversion) : la carte peut être vide/incorrecte, "
+                                "réexportez la source en EPSG:4326 (WGS84).")
+                log.warning(f"[DLR] {resource_dict.get('id')} :{_crs_warning}")
+        elif os.path.getsize(src_path) > DATALOAD_MAX_SYNC_BYTES:
             log.info(f"[DLR] Conversion streaming ogr2ogr ({os.path.getsize(src_path)} o) : {resource_dict.get('id')}")
             csv_path = _ogr_to_csv(src_path)
         else:
@@ -1605,7 +1687,7 @@ def _process_json_resource(resource_dict):
 
         # 3. Ressource CSV dérivée + activation XLoader (chargement datastore en streaming)
         uploaded = _create_uploaded_resource(package_id, csv_path, name='converted_from_json.csv',
-                                             description=f'Ressource dérivée du JSON original : {original_url}')
+                                             description=f'Ressource dérivée du JSON original : {original_url}{_crs_warning}')
         context = {'ignore_auth': True}
         toolkit.get_action('resource_patch')(context, {
             'id': uploaded['id'], 'format': 'CSV', 'mimetype': 'text/csv',
