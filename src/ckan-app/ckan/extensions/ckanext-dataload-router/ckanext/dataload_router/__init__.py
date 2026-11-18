@@ -1330,6 +1330,55 @@ def _parquet_to_csv(src_path):
     return out_path
 
 
+def _alert_ingestion_failure(resource_id, kind, exc):
+    """Best-effort : prévient les admins plateforme (relais dtz-rag /notify) qu'une
+    ingestion automatique a échoué pour une ressource déposée. N'échoue et ne lève JAMAIS
+    (l'appelant re-raise l'erreur réelle). Destinataires : DLR_ALERT_EMAILS (vide = silence).
+    Dédoublonné par ressource (Redis, 1 h) : les jobs peuvent être enfilés plusieurs fois
+    (after_create + after_update) et rejoués (RQ retry), on n'envoie qu'un mail."""
+    try:
+        recipients = [e.strip() for e in os.environ.get('DLR_ALERT_EMAILS', '').split(',') if e.strip()]
+        if not recipients:
+            return
+        try:
+            from ckan.lib.redis import connect_to_redis
+            if not connect_to_redis().set(f"dlr:alert:{resource_id}", "1", nx=True, ex=3600):
+                return
+        except Exception:
+            pass
+        title, name, depose_par = resource_id, None, None
+        try:
+            res = toolkit.get_action('resource_show')({'ignore_auth': True}, {'id': resource_id})
+            pkg = toolkit.get_action('package_show')({'ignore_auth': True}, {'id': res['package_id']})
+            title = pkg.get('title') or pkg.get('name') or resource_id
+            name = pkg.get('name')
+            for ex in pkg.get('extras', []):
+                if ex.get('key') == 'depose_par':
+                    depose_par = ex.get('value')
+        except Exception:
+            pass
+        site = (config.get('ckan.site_url') or '').rstrip('/')
+        corps = (
+            f"L'ingestion automatique ({kind}) a échoué pour un jeu déposé.\n\n"
+            f"Jeu : {title}\n"
+            + (f"Déposé par : {depose_par}\n" if depose_par else "")
+            + (f"Fiche : {site}/dataset/{name}\n" if site and name else "")
+            + f"Ressource : {resource_id}\n"
+            f"Erreur : {str(exc)[:500]}\n\n"
+            "Le fichier n'a pas pu être chargé dans le datastore (format, CRS, données). "
+            "À vérifier, puis redéposer un fichier corrigé si besoin.")
+        requests.post(
+            f"{os.getenv('RAG_INTERNAL_URL', 'http://dtz-rag:8000')}/notify",
+            json={'to': recipients, 'subject': f"Souci d'ingestion ({kind}) : {title}"[:200], 'text': corps},
+            headers={'X-Dtz-Token': os.getenv('RAG_WEBHOOK_TOKEN', '')}, timeout=15)
+        log.info(f"[DLR] alerte ingestion envoyée ({kind}) pour {resource_id}")
+    except Exception as e:
+        try:
+            log.warning(f"[DLR] alerte ingestion non envoyée pour {resource_id}: {e}")
+        except Exception:
+            pass
+
+
 def dlr_parquet_job(resource_id):
     """Job ASYNCHRONE (RQ) : convertit un Parquet déposé en CSV (DuckDB, streaming) puis
     charge le datastore via xloader, sur le même schéma que le job GeoJSON. Re-lit la
@@ -1371,9 +1420,10 @@ def dlr_parquet_job(resource_id):
         log.info(f"[DLR] job parquet: conversion + chargement de {resource_id}")
         try:
             _process_parquet_resource(res)
-        except Exception:
+        except Exception as e:
             import traceback as _tb
             log.error("[DLR] job parquet ECHEC:\n" + _tb.format_exc())
+            _alert_ingestion_failure(resource_id, 'parquet', e)
             raise
         _reindex_package(res.get('package_id'))
     finally:
@@ -1466,7 +1516,12 @@ def dlr_geojson_job(resource_id):
         except Exception:
             pass
         log.info(f"[DLR] job geojson: conversion + chargement de {resource_id}")
-        _process_json_resource(res)
+        try:
+            _process_json_resource(res)
+        except Exception as e:
+            log.error(f"[DLR] job geojson ECHEC {resource_id}: {e}")
+            _alert_ingestion_failure(resource_id, 'geojson', e)
+            raise
         _reindex_package(res.get('package_id'))  # fraîcheur Solr : la fiche voit le CSV dérivé
     finally:
         # Hygiène session : ce job tourne dans le worker RQ (hors requête web). Sans ce
@@ -1534,7 +1589,12 @@ def dlr_ogr_geo_job(resource_id):
         except Exception:
             pass
         log.info(f"[DLR] job ogr-geo: conversion + chargement de {resource_id}")
-        _process_ogr_geo_resource(res)
+        try:
+            _process_ogr_geo_resource(res)
+        except Exception as e:
+            log.error(f"[DLR] job ogr-geo ECHEC {resource_id}: {e}")
+            _alert_ingestion_failure(resource_id, 'ogr-geo', e)
+            raise
         _reindex_package(res.get('package_id'))
     finally:
         try:
